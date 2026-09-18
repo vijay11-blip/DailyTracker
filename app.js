@@ -7,7 +7,8 @@ function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).o
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
-function del(store,id){deleteRecord(store,id).then(refresh)}
+function del(store,id){deleteRecord(store,id).then(refreshAndSync)}
+function refreshAndSync(){return refresh().then(()=>{if(navigator.onLine)syncNow()})}
 function today(){return new Date().toISOString().slice(0,10)}
 function val(id){return document.getElementById(id).value}
 
@@ -32,7 +33,7 @@ async function refresh(){for(let k of Object.keys(state))state[k]=await all(k);a
 // ---------- Income ----------
 let editingIncomeId=null;
 function resetIncomeForm(){document.getElementById('iAmount').value='';document.getElementById('iCat').value='Salary';document.getElementById('iNote').value='';document.getElementById('iDate').value=today();editingIncomeId=null;document.getElementById('iSaveBtn').textContent='Save Income';document.getElementById('iCancelEdit').classList.add('hidden')}
-async function addIncome(){let amount=+val('iAmount');if(!amount)return alert('Enter amount');let obj={date:val('iDate')||today(),amount,cat:val('iCat'),note:val('iNote')};if(editingIncomeId)obj.id=editingIncomeId;await save('income',obj);resetIncomeForm();refresh()}
+async function addIncome(){let amount=+val('iAmount');if(!amount)return alert('Enter amount');let obj={date:val('iDate')||today(),amount,cat:val('iCat'),note:val('iNote')};if(editingIncomeId)obj.id=editingIncomeId;await save('income',obj);resetIncomeForm();refreshAndSync()}
 function editIncome(id){let x=state.income.find(r=>r.id===id);if(!x)return;editingIncomeId=id;document.getElementById('iDate').value=x.date;document.getElementById('iAmount').value=x.amount;document.getElementById('iCat').value=x.cat||x.source||'Other';document.getElementById('iNote').value=x.note||'';document.getElementById('iSaveBtn').textContent='Update Income';document.getElementById('iCancelEdit').classList.remove('hidden');show('income',document.querySelectorAll('.tabs button')[1]);window.scrollTo(0,0)}
 function cancelIncomeEdit(){resetIncomeForm()}
 function renderIncomeList(){
@@ -44,7 +45,7 @@ function renderIncomeList(){
 // ---------- Expense ----------
 let editingExpenseId=null;
 function resetExpenseForm(){document.getElementById('eAmount').value='';document.getElementById('eCat').value='Food';document.getElementById('eMethod').value='';document.getElementById('eNote').value='';document.getElementById('eDate').value=today();editingExpenseId=null;document.getElementById('eSaveBtn').textContent='Save Expense';document.getElementById('eCancelEdit').classList.add('hidden')}
-async function addExpense(){let amount=+val('eAmount');if(!amount)return alert('Enter amount');let obj={date:val('eDate')||today(),amount,cat:val('eCat'),method:val('eMethod'),note:val('eNote')};if(editingExpenseId)obj.id=editingExpenseId;await save('expense',obj);resetExpenseForm();refresh()}
+async function addExpense(){let amount=+val('eAmount');if(!amount)return alert('Enter amount');let obj={date:val('eDate')||today(),amount,cat:val('eCat'),method:val('eMethod'),note:val('eNote')};if(editingExpenseId)obj.id=editingExpenseId;await save('expense',obj);resetExpenseForm();refreshAndSync()}
 function editExpense(id){let x=state.expense.find(r=>r.id===id);if(!x)return;editingExpenseId=id;document.getElementById('eDate').value=x.date;document.getElementById('eAmount').value=x.amount;document.getElementById('eCat').value=x.cat||'Other';document.getElementById('eMethod').value=x.method||'';document.getElementById('eNote').value=x.note||'';document.getElementById('eSaveBtn').textContent='Update Expense';document.getElementById('eCancelEdit').classList.remove('hidden');show('expense',document.querySelectorAll('.tabs button')[2]);window.scrollTo(0,0)}
 function cancelExpenseEdit(){resetExpenseForm()}
 function renderExpenseList(){
@@ -63,7 +64,7 @@ async function addDue(){
   let existing=editingDueId?state.dues.find(d=>d.id===editingDueId):null;
   let obj={name,amount,days,paidDates:existing?existing.paidDates||[]:[]};
   if(editingDueId)obj.id=editingDueId;
-  await save('dues',obj);resetDueForm();refresh()
+  await save('dues',obj);resetDueForm();refreshAndSync()
 }
 function editDue(id){let x=state.dues.find(r=>r.id===id);if(!x)return;editingDueId=id;document.getElementById('dueName').value=x.name;document.getElementById('dueAmount').value=x.amount;document.getElementById('dueDay').value=(x.days||[]).join(', ');document.getElementById('dueSaveBtn').textContent='Update Due';document.getElementById('dueCancelEdit').classList.remove('hidden');show('dues',document.querySelectorAll('.tabs button')[3]);window.scrollTo(0,0)}
 function cancelDueEdit(){resetDueForm()}
@@ -71,7 +72,7 @@ async function deleteDue(id){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
   if(!confirm('Delete "'+x.name+'"? This also removes any expenses it auto-logged when marked paid.'))return;
   for(let expId of Object.values(x.linkedExpenses||{}))await deleteRecord('expense',expId);
-  await deleteRecord('dues',id);refresh()
+  await deleteRecord('dues',id);refreshAndSync()
 }
 async function toggleDueDay(id,dateStr){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
@@ -88,7 +89,7 @@ async function toggleDueDay(id,dateStr){
     let expId=await save('expense',{date:dateStr,amount:x.amount,cat:'Bills',method:'',note:x.name+' (auto)'});
     x.linkedExpenses[dateStr]=expId
   }
-  await save('dues',x);refresh()
+  await save('dues',x);refreshAndSync()
 }
 function renderDues(){
   let ym=today().slice(0,7);
