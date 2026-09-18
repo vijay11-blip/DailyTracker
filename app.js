@@ -197,6 +197,16 @@ async function refreshPersistStatus(){
   let persisted=await navigator.storage.persisted();
   el.textContent='Storage protection: '+(persisted?'On — the browser won\'t auto-clear this data under storage pressure':'Off — ask the browser to protect this data')
 }
+function backupIsOverdue(){
+  let last=localStorage.getItem('lastBackup');
+  if(!last)return true;
+  let days=Math.floor((Date.now()-new Date(last).getTime())/86400000);
+  return days>=7
+}
+async function autoBackupIfDue(){
+  if(!backupIsOverdue())return;
+  try{await exportData()}catch(e){} // browser may block a download with no user click yet — banner still shows as a fallback
+}
 function refreshBackupBanner(){
   let last=localStorage.getItem('lastBackup');
   let days=last?Math.floor((Date.now()-new Date(last).getTime())/86400000):null;
@@ -227,7 +237,7 @@ let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDef
 (async()=>{
   await openDB();
   document.getElementById('iDate').value=today();document.getElementById('eDate').value=today();document.getElementById('month').value=today().slice(0,7);
-  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();
+  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();autoBackupIfDue();
   if('serviceWorker'in navigator){await navigator.serviceWorker.register('sw.js');if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}}
   if(navigator.onLine)syncNow(); // auto-sync in the background on load; safe to skip silently if offline
 })()
