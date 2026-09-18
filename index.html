@@ -5,15 +5,83 @@
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Daily Tracker">
 <title>Daily Tracker</title>
 <style>
-*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f4f7fb;color:#172033}.app{max-width:1000px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.top h1{margin:0}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}.tabs button,.btn{border:0;border-radius:10px;padding:10px 14px;background:#e7eefc;color:#173b75;cursor:pointer}.tabs button.active,.primary{background:#2563eb;color:white}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{background:white;padding:18px;border-radius:14px;box-shadow:0 2px 10px #0000000d}.card small{color:#667085}.amount{font-size:25px;font-weight:700;margin-top:8px}.income{color:#15803d}.expense{color:#dc2626}.balance{color:#2563eb}.section{background:white;padding:18px;border-radius:14px;margin-top:14px}.form{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.form input,.form select{padding:11px;border:1px solid #d5dbea;border-radius:9px;width:100%}.form button{border:0;border-radius:9px;background:#2563eb;color:#fff;padding:11px;cursor:pointer}.wide{grid-column:span 2}.list{margin-top:15px}.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;padding:12px 0;border-bottom:1px solid #edf0f5;align-items:center}.due{display:grid;grid-template-columns:1fr 120px 130px 110px auto;gap:8px;padding:12px 0;border-bottom:1px solid #edf0f5;align-items:center}.due-flex{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid #edf0f5}.pill{cursor:default}.search{width:100%;padding:11px;border:1px solid #d5dbea;border-radius:9px;margin-top:14px}canvas{max-width:100%}.pill{padding:5px 8px;border-radius:20px;background:#fff4cc;font-size:12px}.paid{background:#dcfce7;color:#166534}.danger{background:#fee2e2;color:#991b1b}.muted{color:#667085}.actions{display:flex;gap:6px}.hidden{display:none}.backup{display:flex;gap:8px;flex-wrap:wrap}.summary{display:flex;gap:20px;flex-wrap:wrap}.summary b{font-size:18px}@media(max-width:700px){.cards{grid-template-columns:1fr}.form{grid-template-columns:1fr 1fr}.wide{grid-column:span 2}.row,.due{grid-template-columns:1fr 1fr}.row .actions,.due .actions{grid-column:1/-1}.top{align-items:flex-start;gap:10px;flex-direction:column}}
+:root{--bg:#f1f4fa;--surface:#ffffff;--surface-2:#f8fafc;--border:#e6e9f2;--text:#0f172a;--muted:#64748b;--muted-2:#94a3b8;--brand:#2f5bff;--brand-dark:#1d3fd1;--brand-soft:#eef1ff;--income:#0f9d58;--income-soft:#e7f8ef;--expense:#e0393e;--expense-soft:#fdeced;--warn:#b45309;--warn-soft:#fef3c7;--radius-lg:18px;--radius-md:12px;--radius-sm:9px;--shadow:0 1px 2px rgba(16,24,40,.04),0 6px 18px rgba(16,24,40,.06)}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.app{max-width:1040px;margin:auto;padding:20px 18px 60px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:12px}
+.top h1{margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em}
+.top .muted{font-size:13px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:22px;background:var(--surface);padding:6px;border-radius:14px;box-shadow:var(--shadow)}
+.tabs button{border:0;border-radius:10px;padding:9px 14px;background:transparent;color:var(--muted);cursor:pointer;font-size:13.5px;font-weight:600;transition:background .15s,color .15s}
+.tabs button:hover{background:var(--surface-2);color:var(--text)}
+.tabs button.active{background:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(47,91,255,.35)}
+.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--brand-soft);color:var(--brand-dark);cursor:pointer;font-size:13.5px;font-weight:600;transition:filter .15s,transform .05s}
+.btn:hover{filter:brightness(0.97)}
+.btn:active{transform:scale(.98)}
+.primary{background:var(--brand);color:#fff}
+.primary:hover{filter:brightness(1.06)}
+.danger{background:var(--expense-soft);color:#a4161a}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{background:var(--surface);padding:20px;border-radius:var(--radius-lg);box-shadow:var(--shadow);border:1px solid var(--border)}
+.card small{color:var(--muted);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.amount{font-size:26px;font-weight:800;margin-top:6px;letter-spacing:-.01em}
+.income{color:var(--income)}
+.expense{color:var(--expense)}
+.balance{color:var(--brand)}
+.section{background:var(--surface);padding:20px;border-radius:var(--radius-lg);margin-top:14px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.section h2{font-size:16px;margin:0 0 4px;font-weight:700;letter-spacing:-.01em}
+.section h3{font-size:14.5px;margin:0 0 10px;font-weight:700;color:var(--text)}
+.insight-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}
+.insight{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px}
+.insight small{display:block;color:var(--muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px}
+.insight b{font-size:17px;font-weight:800}
+.insight .delta{font-size:11.5px;font-weight:700;margin-left:4px}
+.up{color:var(--income)}
+.down{color:var(--expense)}
+.form{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.form input,.form select,.form textarea{padding:11px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);width:100%;font-size:14px;font-family:inherit;background:var(--surface-2);color:var(--text);transition:border-color .15s,background .15s}
+.form input:focus,.form select:focus,.form textarea:focus{outline:none;border-color:var(--brand);background:var(--surface)}
+.form button{border:0;border-radius:var(--radius-sm);background:var(--brand);color:#fff;padding:11px;cursor:pointer;font-weight:700;font-size:13.5px;transition:filter .15s}
+.form button:hover{filter:brightness(1.06)}
+.wide{grid-column:span 2}
+.list{margin-top:6px}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;padding:13px 4px;border-bottom:1px solid var(--border);align-items:center;font-size:13.5px;border-radius:8px;transition:background .1s}
+.row:hover{background:var(--surface-2)}
+.row:last-child{border-bottom:0}
+.due{display:grid;grid-template-columns:1fr 120px 130px 110px auto;gap:8px;padding:13px 4px;border-bottom:1px solid var(--border);align-items:center}
+.due-flex{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:13px 4px;border-bottom:1px solid var(--border)}
+.pill{cursor:default;padding:5px 10px;border-radius:20px;background:var(--warn-soft);color:var(--warn);font-size:11.5px;font-weight:700}
+.paid{background:var(--income-soft);color:var(--income)}
+.muted{color:var(--muted)}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.hidden{display:none}
+.backup{display:flex;gap:8px;flex-wrap:wrap}
+.summary{display:flex;gap:20px;flex-wrap:wrap}
+.summary b{font-size:19px;font-weight:800}
+.search{width:100%;padding:11px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);margin-top:16px;font-size:14px;background:var(--surface-2)}
+.search:focus{outline:none;border-color:var(--brand);background:var(--surface)}
+canvas{max-width:100%}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#0b1220;--surface:#131b2c;--surface-2:#182236;--border:#25304a;--text:#eef2ff;--muted:#94a3b8;--muted-2:#64748b;--brand-soft:#1b2547;--income-soft:#0f2a1c;--expense-soft:#33161a;--warn-soft:#3a2a0d}
+}
+@media(max-width:700px){
+  .cards{grid-template-columns:1fr}
+  .form{grid-template-columns:1fr 1fr}
+  .wide{grid-column:span 2}
+  .row,.due{grid-template-columns:1fr 1fr}
+  .row .actions,.due .actions{grid-column:1/-1}
+  .top{align-items:flex-start;gap:10px;flex-direction:column}
+}
 </style></head>
 <body><main class="app">
 <div class="top"><div><h1>Daily Tracker</h1><span class="muted">Offline Finance Manager</span></div><button class="btn" onclick="installApp()">Install App</button></div>
-<div class="tabs"><button class="active" onclick="show('dash',this)">Dashboard</button><button onclick="show('income',this)">Income</button><button onclick="show('expense',this)">Expenses</button><button onclick="show('dues',this)">Monthly Dues</button><button onclick="show('reports',this)">Reports</button><button onclick="show('settings',this)">Backup</button></div>
+<div class="tabs"><button class="active" onclick="show('dash',this)">Dashboard</button><button onclick="show('income',this)">Income</button><button onclick="show('expense',this)">Expenses</button><button onclick="show('dues',this)">Monthly Dues</button><button onclick="show('advances',this)">Advances</button><button onclick="show('documents',this)">Documents</button><button onclick="show('notes',this)">Notes</button><button onclick="show('reports',this)">Reports</button><button onclick="show('settings',this)">Backup</button></div>
 
 <section id="dash">
-<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24;background:#fffbeb"><b style="color:#92400e">⚠ Back up your data</b><p class="muted" id="lastBackupText" style="margin:6px 0">—</p><p class="muted" style="margin:0 0 10px">This app stores everything only on this device. Clearing Chrome's "Cookies and site data" deletes it permanently — export a backup regularly.</p><button class="btn primary" onclick="show('settings',document.querySelectorAll('.tabs button')[5]);exportData()">Export Backup Now</button></div>
+<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24;background:#fffbeb"><b style="color:#92400e">⚠ Back up your data</b><p class="muted" id="lastBackupText" style="margin:6px 0">—</p><p class="muted" style="margin:0 0 10px">This app stores everything only on this device. Clearing Chrome's "Cookies and site data" deletes it permanently — export a backup regularly.</p><button class="btn primary" onclick="show('settings',document.querySelectorAll('.tabs button')[8]);exportData()">Export Backup Now</button></div>
 <div class="cards"><div class="card"><small>Total Income</small><div id="dIncome" class="amount income">₹0</div></div><div class="card"><small>Total Expense</small><div id="dExpense" class="amount expense">₹0</div></div><div class="card"><small>Balance</small><div id="dBalance" class="amount balance">₹0</div></div></div>
+<div id="dashInsights" class="insight-grid"></div>
 <div class="section"><h2>Upcoming / Pending Dues</h2><div id="dashDues" class="list"></div></div></section>
 
 <section id="income" class="hidden"><div class="section"><h2>Add Income</h2><div class="form"><input id="iDate" type="date"><input id="iAmount" type="number" placeholder="Amount"><select id="iCat"><option>Salary</option><option>Business</option><option>Freelance</option><option>Investment</option><option>Rental</option><option>Gift</option><option>Interest</option><option>Other</option></select><input id="iNote" class="wide" placeholder="Description"><button id="iSaveBtn" onclick="addIncome()">Save Income</button><button id="iCancelEdit" class="btn hidden" onclick="cancelIncomeEdit()">Cancel Edit</button></div></div><div class="section"><h2>Income History</h2><input id="iSearch" class="search" placeholder="Search by date, category or note…" oninput="renderIncomeList()"><div id="incomeList" class="list"></div></div></section>
@@ -22,7 +90,13 @@
 
 <section id="dues" class="hidden"><div class="section"><h2>Add Monthly Due</h2><div class="form"><input id="dueName" placeholder="Due name"><input id="dueAmount" type="number" placeholder="Amount"><input id="dueDay" placeholder="Due day(s), e.g. 5 or 5, 20"><button id="dueSaveBtn" onclick="addDue()">Save Due</button><button id="dueCancelEdit" class="btn hidden" onclick="cancelDueEdit()">Cancel Edit</button></div></div><div class="section"><h2>Monthly Dues</h2><div id="dueList" class="list"></div></div></section>
 
-<section id="reports" class="hidden"><div class="section"><h2>Monthly Report</h2><div class="form"><input id="month" type="month" onchange="report()"></div><div id="reportBox" class="summary" style="margin-top:18px"></div><div id="catBox" class="list"></div></div><div class="section"><h3>Expense by Category (chart)</h3><canvas id="catChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Income vs Expense — last 6 months</h3><canvas id="trendChart" style="width:100%;height:220px"></canvas></div></section>
+<section id="advances" class="hidden"><div class="cards" id="advanceSummary" style="margin-bottom:14px"></div><div class="section"><h2>Add Advance</h2><div class="form"><input id="advPerson" placeholder="Person's name"><input id="advAmount" type="number" placeholder="Amount"><select id="advDirection"><option value="given">I gave (they owe me)</option><option value="taken">I took (I owe them)</option></select><input id="advDueDate" type="date"><input id="advNote" class="wide" placeholder="Note (optional)"><button id="advSaveBtn" onclick="addAdvance()">Save Advance</button><button id="advCancelEdit" class="btn hidden" onclick="cancelAdvanceEdit()">Cancel Edit</button></div></div><div class="section"><h2>All Advances</h2><div id="advanceList" class="list"></div></div></section>
+
+<section id="documents" class="hidden"><div class="section"><h2>Add Document</h2><div class="form"><input id="docFile" type="file" class="wide"><input id="docTitle" placeholder="Title"><input id="docTags" placeholder="Tags (optional)"><button onclick="addDocument()">Save Document</button></div><p class="muted" style="margin-top:10px">Files are stored only on this device (up to 20MB each) and are included in Export Backup, but are <b>not</b> sent through Google Sheets sync — sheets can't hold file data.</p></div><div class="section"><h2>Saved Documents</h2><div id="documentList" class="list"></div></div></section>
+
+<section id="notes" class="hidden"><div class="section"><h2>Add Note</h2><div class="form" style="grid-template-columns:1fr"><input id="noteTitle" placeholder="Title"><textarea id="noteContent" placeholder="Write your note…" rows="4" style="padding:11px;border:1px solid #d5dbea;border-radius:9px;font-family:inherit"></textarea><button id="noteSaveBtn" onclick="addNote()">Save Note</button><button id="noteCancelEdit" class="btn hidden" onclick="cancelNoteEdit()">Cancel Edit</button></div></div><div class="section"><h2>Notes</h2><div id="noteList" class="list"></div></div></section>
+
+<section id="reports" class="hidden"><div class="section"><h2>Monthly Report</h2><div class="form"><input id="month" type="month" onchange="report()"></div><div id="reportBox" class="summary" style="margin-top:18px"></div><div id="reportInsights" class="insight-grid"></div><div id="catBox" class="list"></div></div><div class="section"><h3>Expense by Category (chart)</h3><canvas id="catChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Income vs Expense — last 6 months</h3><canvas id="trendChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Savings Rate — last 6 months</h3><canvas id="savingsChart" style="width:100%;height:220px"></canvas></div></section>
 
 <section id="settings" class="hidden"><div class="section"><h2>Google Sheets Sync (two-way)</h2><p class="muted">This device is already connected — it syncs automatically each time you open the app (when online), and you can also tap "Sync Now" anytime.</p><div class="form" style="grid-template-columns:1fr"><input id="gsScriptUrlInput" placeholder="Apps Script Web App URL"><input id="gsSyncTokenInput" placeholder="Secret token"><button onclick="saveScriptConfig()">Save</button></div><div class="backup" style="margin-top:10px"><button id="syncNowBtn" class="btn primary" onclick="syncNow()">Sync Now</button></div><p id="syncStatus" class="muted" style="margin-top:10px">Not set up yet</p></div><div class="section"><h2>Storage Safety</h2><p class="muted">This app's data (income, expenses, dues) lives only in this browser on this device — nowhere else. In Chrome, clearing <b>"Browsing history"</b> alone is safe, but clearing <b>"Cookies and other site data"</b> (or "All data") deletes it permanently, even if the app is installed.</p><p id="persistStatus" class="muted">Storage protection: checking…</p><p class="muted">Export a backup regularly — it's the only real safety net.</p></div><div class="section"><h2>Due Reminders</h2><p class="muted">Get a notification on this device when a monthly due is pending. These fire reliably whenever the app is open; a reminder while the app is fully closed only works on some Android/Chrome setups and isn't guaranteed by the OS.</p><p id="notifStatus" class="muted">Status: checking…</p><button class="btn primary" onclick="enableNotifications()">Enable Due Reminders</button></div><div class="section"><h2>Backup & Restore</h2><p class="muted">All data stays on this device. Export a backup before changing or clearing the device.</p><div class="backup"><button class="btn primary" onclick="exportData()">Export Backup</button><label class="btn">Import Backup <input id="importFile" type="file" accept=".json" hidden onchange="importData(event)"></label><button class="btn danger" onclick="clearAll()">Delete All Data</button></div></div></section>
 </main>
