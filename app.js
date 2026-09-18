@@ -239,7 +239,7 @@ let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDef
 // needing to paste anything in Settings. Anyone who views this public
 // repo's source can see these, so treat this URL+token as a shared password
 // for this Google Sheet, not a private secret.
-const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxq9dCuuI9lOuzim_NxeWF1MJ5L_s0T6LFSoTCuXUz7O_bmgJ778nXAKBiTkkw65G6ffw/exec';
+const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbyZwnxmg4AYQpC8Hu9Ln1mO_x_0JFus4CARV9Pn5u9OLcjeKBhM00grHAp_1Qd8FeEC5A/exec';
 const DEFAULT_SYNC_TOKEN='dt-b574d5d72a89ae2b';
 function getScriptUrl(){return localStorage.getItem('gsScriptUrl')||DEFAULT_SCRIPT_URL}
 function setScriptUrl(v){localStorage.setItem('gsScriptUrl',v)}
