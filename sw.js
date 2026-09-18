@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v6';
+const CACHE = 'daily-tracker-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -23,6 +23,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== self.location.origin) return; // let Google API/sign-in calls go straight to network
   e.respondWith(
     caches.match(e.request).then(cached => {
       const network = fetch(e.request)

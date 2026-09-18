@@ -4,7 +4,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&
 const pad=n=>String(n).padStart(2,'0');
 function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-function save(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
 function del(store,id){deleteRecord(store,id).then(refresh)}
 function today(){return new Date().toISOString().slice(0,10)}
@@ -226,6 +227,161 @@ let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDef
 (async()=>{
   await openDB();
   document.getElementById('iDate').value=today();document.getElementById('eDate').value=today();document.getElementById('month').value=today().slice(0,7);
-  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();
+  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();
   if('serviceWorker'in navigator){await navigator.serviceWorker.register('sw.js');if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}}
 })()
+
+// ========== Google Sheets two-way sync ==========
+const SHEETS_SCOPE='https://www.googleapis.com/auth/spreadsheets';
+let gsiLoaded=false, tokenClient=null, accessToken=null, tokenExpiry=0;
+
+function loadGsi(){
+  return new Promise((resolve,reject)=>{
+    if(gsiLoaded||(window.google&&window.google.accounts&&window.google.accounts.oauth2)){gsiLoaded=true;return resolve()}
+    let s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.defer=true;
+    s.onload=()=>{gsiLoaded=true;resolve()};s.onerror=()=>reject(new Error('Could not load Google sign-in — check your internet connection.'));
+    document.head.appendChild(s)
+  })
+}
+function getClientId(){return localStorage.getItem('gsClientId')||''}
+function setClientId(v){localStorage.setItem('gsClientId',v)}
+function getSpreadsheetId(){return localStorage.getItem('gsSpreadsheetId')||''}
+function setSpreadsheetId(v){localStorage.setItem('gsSpreadsheetId',v)}
+function getSpreadsheetUrl(){return localStorage.getItem('gsSpreadsheetUrl')||''}
+function setSpreadsheetUrl(v){localStorage.setItem('gsSpreadsheetUrl',v)}
+function updateSyncStatus(msg){let el=document.getElementById('syncStatus');if(el)el.textContent=msg}
+
+async function saveClientId(){
+  let v=val('gsClientIdInput').trim();
+  if(!v)return alert('Paste your Google OAuth Client ID first.');
+  setClientId(v);updateSyncStatus('Client ID saved. Click "Connect Google" next.')
+}
+
+function ensureToken(interactive){
+  let clientId=getClientId();
+  if(!clientId)return Promise.reject(new Error('No Google Client ID set — paste it above first.'));
+  if(accessToken&&Date.now()<tokenExpiry-30000)return Promise.resolve(accessToken);
+  return loadGsi().then(()=>new Promise((resolve,reject)=>{
+    tokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:clientId,
+      scope:SHEETS_SCOPE,
+      callback:(resp)=>{
+        if(resp.error)return reject(new Error(resp.error));
+        accessToken=resp.access_token;tokenExpiry=Date.now()+(resp.expires_in||3600)*1000;
+        resolve(accessToken)
+      }
+    });
+    tokenClient.requestAccessToken({prompt:interactive?'consent':''})
+  }))
+}
+
+async function connectGoogle(){
+  try{
+    updateSyncStatus('Connecting…');
+    await ensureToken(true);
+    updateSyncStatus('Connected to Google. Tap "Sync Now" whenever you want to sync.')
+  }catch(e){updateSyncStatus('Connection failed: '+e.message)}
+}
+
+async function sheetsApi(path,options){
+  options=options||{};
+  let token;
+  try{token=await ensureToken(false)}catch(e){token=await ensureToken(true)}
+  let doFetch=t=>fetch('https://sheets.googleapis.com/v4/spreadsheets'+path,Object.assign({},options,{headers:Object.assign({'Authorization':'Bearer '+t,'Content-Type':'application/json'},options.headers||{})}));
+  let res=await doFetch(token);
+  if(res.status===401){accessToken=null;token=await ensureToken(true);res=await doFetch(token)}
+  if(!res.ok){let t=await res.text();throw new Error('Google Sheets error '+res.status+': '+t.slice(0,200))}
+  return res.status===204?null:res.json()
+}
+
+const SHEET_TABS={
+  Income:['id','date','amount','cat','note','updatedAt'],
+  Expense:['id','date','amount','cat','method','note','updatedAt'],
+  Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt']
+};
+function colLetter(n){return String.fromCharCode(64+n)}
+
+async function ensureSpreadsheet(){
+  let id=getSpreadsheetId();
+  if(id)return id;
+  updateSyncStatus('Creating your Google Sheet…');
+  let body={properties:{title:'Daily Tracker Sync'},sheets:Object.keys(SHEET_TABS).map(t=>({properties:{title:t}}))};
+  let data=await sheetsApi('',{method:'POST',body:JSON.stringify(body)});
+  setSpreadsheetId(data.spreadsheetId);setSpreadsheetUrl(data.spreadsheetUrl);
+  for(let tab of Object.keys(SHEET_TABS))await sheetsApi('/'+data.spreadsheetId+'/values/'+encodeURIComponent(tab+'!A1')+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:[SHEET_TABS[tab]]})});
+  return data.spreadsheetId
+}
+
+function rowsToObjects(tab,rows){
+  return (rows||[]).map(r=>{
+    if(tab==='Income')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:r[5]?+r[5]:Date.now()};
+    if(tab==='Expense')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',method:r[4]||'',note:r[5]||'',updatedAt:r[6]?+r[6]:Date.now()};
+    return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now()}
+  })
+}
+function objectToRow(tab,x){
+  if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||Date.now()];
+  if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||Date.now()];
+  return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now()]
+}
+
+// Safe two-way merge: newer updatedAt wins on shared ids; records only on one
+// side are added to the other. Never auto-deletes — deleting stays a manual,
+// explicit action on whichever side you deleted it.
+function mergeRecords(localArr,remoteArr){
+  let result=localArr.map(r=>Object.assign({},r));
+  let byId=new Map(result.filter(r=>r.id!=null).map(r=>[r.id,r]));
+  for(let r of remoteArr){
+    if(r.id!=null&&byId.has(r.id)){
+      let existing=byId.get(r.id);
+      if((r.updatedAt||0)>(existing.updatedAt||0))Object.assign(existing,r,{id:existing.id})
+    }else if(r.id!=null){
+      let obj=Object.assign({},r);result.push(obj);byId.set(obj.id,obj)
+    }else{
+      let obj=Object.assign({},r);delete obj.id;result.push(obj)
+    }
+  }
+  return result
+}
+
+async function readTab(id,tab){
+  let cols=SHEET_TABS[tab].length;
+  let data=await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2:'+colLetter(cols)+'100000'));
+  return rowsToObjects(tab,data.values)
+}
+async function writeTab(id,tab,arr){
+  let cols=SHEET_TABS[tab].length;
+  await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2:'+colLetter(cols)+'100000')+':clear',{method:'POST',body:'{}'});
+  if(!arr.length)return;
+  let rows=arr.map(x=>objectToRow(tab,x));
+  await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2')+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:rows})})
+}
+async function syncStore(id,tab,storeName){
+  let remote=await readTab(id,tab);
+  let merged=mergeRecords(state[storeName],remote);
+  for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
+  state[storeName]=await all(storeName);
+  await writeTab(id,tab,state[storeName])
+}
+async function syncNow(){
+  let btn=document.getElementById('syncNowBtn');if(btn)btn.disabled=true;
+  try{
+    updateSyncStatus('Syncing…');
+    let id=await ensureSpreadsheet();
+    await syncStore(id,'Income','income');
+    await syncStore(id,'Expense','expense');
+    await syncStore(id,'Dues','dues');
+    localStorage.setItem('lastSync',new Date().toISOString());
+    refresh();
+    updateSyncStatus('Synced ✓ — just now');
+    refreshSyncUI()
+  }catch(e){updateSyncStatus('Sync failed: '+e.message)}
+  finally{if(btn)btn.disabled=false}
+}
+function refreshSyncUI(){
+  let cidEl=document.getElementById('gsClientIdInput');if(cidEl&&!cidEl.value)cidEl.value=getClientId();
+  let last=localStorage.getItem('lastSync');
+  if(!accessToken)updateSyncStatus(last?('Last synced: '+new Date(last).toLocaleString()):'Not synced yet');
+  let linkEl=document.getElementById('sheetLink');
+  if(linkEl){let url=getSpreadsheetUrl();linkEl.innerHTML=url?('Sheet: <a href="'+url+'" target="_blank" rel="noopener">Open in Google Sheets</a>'):''}
+}
