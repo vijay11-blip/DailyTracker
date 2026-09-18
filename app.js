@@ -1,8 +1,8 @@
-const DB='financeDB', VER=1; let db, state={income:[],expense:[],dues:[]}, deferredPrompt=null;
+const DB='financeDB', VER=2; let db, state={income:[],expense:[],dues:[],advances:[],notes:[],documents:[]}, deferredPrompt=null;
 const money=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const pad=n=>String(n).padStart(2,'0');
-function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','advances','notes','documents'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
@@ -103,11 +103,91 @@ function renderDues(){
   dashDues.innerHTML=pending.map(x=>`<div class="row"><b>${esc(x.name)}</b><span>${money(x.amount)}</span><span>Due day ${x.day}</span><span class="pill">Pending</span></div>`).join('')||'<p class="muted">No pending dues.</p>'
 }
 
-// ---------- Render / navigation ----------
+// ---------- Advances (money lent/borrowed) ----------
+let editingAdvanceId=null;
+function resetAdvanceForm(){document.getElementById('advPerson').value='';document.getElementById('advAmount').value='';document.getElementById('advDueDate').value='';document.getElementById('advNote').value='';document.getElementById('advDirection').value='given';editingAdvanceId=null;document.getElementById('advSaveBtn').textContent='Save Advance';document.getElementById('advCancelEdit').classList.add('hidden')}
+async function addAdvance(){
+  let person=val('advPerson'),amount=+val('advAmount'),direction=val('advDirection');
+  if(!person||!amount)return alert('Enter person and amount');
+  let existing=editingAdvanceId?state.advances.find(a=>a.id===editingAdvanceId):null;
+  let obj={person,amount,direction,status:existing?existing.status:'pending',dueDate:val('advDueDate'),note:val('advNote')};
+  if(editingAdvanceId)obj.id=editingAdvanceId;
+  await save('advances',obj);resetAdvanceForm();refreshAndSync()
+}
+function editAdvance(id){let x=state.advances.find(r=>r.id===id);if(!x)return;editingAdvanceId=id;document.getElementById('advPerson').value=x.person;document.getElementById('advAmount').value=x.amount;document.getElementById('advDirection').value=x.direction;document.getElementById('advDueDate').value=x.dueDate||'';document.getElementById('advNote').value=x.note||'';document.getElementById('advSaveBtn').textContent='Update Advance';document.getElementById('advCancelEdit').classList.remove('hidden');show('advances',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
+function cancelAdvanceEdit(){resetAdvanceForm()}
+async function toggleAdvanceStatus(id){let x=state.advances.find(a=>a.id===id);if(!x)return;x.status=x.status==='pending'?'settled':'pending';await save('advances',x);refreshAndSync()}
+function renderAdvances(){
+  let net={};
+  for(let a of state.advances){if(a.status!=='pending')continue;net[a.person]=(net[a.person]||0)+(a.direction==='given'?a.amount:-a.amount)}
+  let owedToYou=Object.values(net).filter(v=>v>0).reduce((a,b)=>a+b,0);
+  let youOwe=Object.values(net).filter(v=>v<0).reduce((a,b)=>a+Math.abs(b),0);
+  let summaryEl=document.getElementById('advanceSummary');
+  if(summaryEl)summaryEl.innerHTML=`<div class="card"><small>Owed to you</small><div class="amount income">${money(owedToYou)}</div></div><div class="card"><small>You owe</small><div class="amount expense">${money(youOwe)}</div></div>`;
+  let rows=state.advances.slice().sort((a,b)=>(a.status==='settled'?1:0)-(b.status==='settled'?1:0)||b.id-a.id);
+  advanceList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.person)}</span><b class="${x.direction==='given'?'income':'expense'}">${x.direction==='given'?'They owe':'You owe'} ${money(x.amount)}</b><span>${x.dueDate?esc(x.dueDate):''} ${x.note?esc(x.note):''}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'Settled':'Pending'}</span><span class="actions"><button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">No advances yet.</p>'
+}
+
+// ---------- Notes ----------
+let editingNoteId=null;
+function resetNoteForm(){document.getElementById('noteTitle').value='';document.getElementById('noteContent').value='';editingNoteId=null;document.getElementById('noteSaveBtn').textContent='Save Note';document.getElementById('noteCancelEdit').classList.add('hidden')}
+async function addNote(){
+  let title=val('noteTitle');if(!title)return alert('Enter a title');
+  let obj={title,content:val('noteContent'),date:today()};
+  if(editingNoteId)obj.id=editingNoteId;
+  await save('notes',obj);resetNoteForm();refreshAndSync()
+}
+function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;document.getElementById('noteTitle').value=x.title;document.getElementById('noteContent').value=x.content||'';document.getElementById('noteSaveBtn').textContent='Update Note';document.getElementById('noteCancelEdit').classList.remove('hidden');show('notes',document.querySelectorAll('.tabs button')[6]);window.scrollTo(0,0)}
+function cancelNoteEdit(){resetNoteForm()}
+function renderNotes(){
+  let rows=state.notes.slice().sort((a,b)=>b.id-a.id);
+  noteList.innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">No notes yet.</p>'
+}
+
+// ---------- Documents ----------
+async function addDocument(){
+  let fileInput=document.getElementById('docFile');
+  let file=fileInput.files[0];
+  let title=val('docTitle')||( file?file.name:'');
+  if(!file)return alert('Choose a file first');
+  if(file.size>20*1024*1024)return alert('File too large for on-device storage (20MB limit).');
+  let obj={title,tags:val('docTags'),fileName:file.name,fileType:file.type,blob:file,dateAdded:today()};
+  await save('documents',obj);
+  fileInput.value='';document.getElementById('docTitle').value='';document.getElementById('docTags').value='';
+  refreshAndSync() // Documents themselves don't sync (binary), but this keeps other tabs in sync too
+}
+function renderDocuments(){
+  let rows=state.documents.slice().sort((a,b)=>b.id-a.id);
+  documentList.innerHTML=rows.map(x=>{let url=x.blob?URL.createObjectURL(x.blob):'';return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="del('documents',${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">No documents yet.</p>'
+}
+
+
 function render(){
   let inc=state.income.reduce((a,x)=>a+x.amount,0),exp=state.expense.reduce((a,x)=>a+x.amount,0);
   dIncome.textContent=money(inc);dExpense.textContent=money(exp);dBalance.textContent=money(inc-exp);
-  renderIncomeList();renderExpenseList();renderDues();report()
+  renderIncomeList();renderExpenseList();renderDues();renderAdvances();renderNotes();renderDocuments();renderDashInsights();report()
+}
+function daysInMonth(ym){let[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate()}
+function daysElapsedInMonth(ym){let now=new Date();let curYM=now.toISOString().slice(0,7);if(ym===curYM)return now.getDate();if(ym<curYM)return daysInMonth(ym);return 0}
+function renderDashInsights(){
+  let el=document.getElementById('dashInsights');if(!el)return;
+  let now=new Date();let thisYM=now.toISOString().slice(0,7);
+  let lastYM=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString().slice(0,7);
+  let thisInc=state.income.filter(x=>x.date.startsWith(thisYM)).reduce((a,x)=>a+x.amount,0);
+  let thisExp=state.expense.filter(x=>x.date.startsWith(thisYM)).reduce((a,x)=>a+x.amount,0);
+  let lastExp=state.expense.filter(x=>x.date.startsWith(lastYM)).reduce((a,x)=>a+x.amount,0);
+  let savingsRate=thisInc>0?((thisInc-thisExp)/thisInc*100):0;
+  let spendChange=lastExp>0?((thisExp-lastExp)/lastExp*100):(thisExp>0?100:0);
+  let dEl=now.getDate();
+  let dailyAvg=dEl>0?thisExp/dEl:0;
+  let netAdv=0;for(let a of state.advances)if(a.status==='pending')netAdv+=(a.direction==='given'?a.amount:-a.amount);
+  let totalBalance=state.income.reduce((a,x)=>a+x.amount,0)-state.expense.reduce((a,x)=>a+x.amount,0);
+  el.innerHTML=`
+    <div class="insight"><small>Savings rate (this month)</small><b class="${savingsRate>=0?'income':'expense'}">${savingsRate.toFixed(0)}%</b></div>
+    <div class="insight"><small>Spend vs last month</small><b>${money(thisExp)}</b><span class="delta ${spendChange<=0?'up':'down'}">${spendChange>=0?'▲':'▼'} ${Math.abs(spendChange).toFixed(0)}%</span></div>
+    <div class="insight"><small>Daily avg spend</small><b>${money(dailyAvg)}</b></div>
+    <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>
+  `
 }
 function show(id,btn){document.querySelectorAll('main>section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');if(id==='reports')report()}
 
@@ -120,8 +200,26 @@ function report(){
   reportBox.innerHTML=`<div><small>Income</small><br><b class="income">${money(inc)}</b></div><div><small>Expense</small><br><b class="expense">${money(exp)}</b></div><div><small>Balance</small><br><b class="balance">${money(inc-exp)}</b></div>`;
   let cats={};state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>cats[x.cat]=(cats[x.cat]||0)+x.amount);
   catBox.innerHTML='<h3>Expense by Category</h3>'+(Object.entries(cats).map(([k,v])=>`<div class="row"><b>${esc(k)}</b><span>${money(v)}</span></div>`).join('')||'<p class="muted">No expenses for this month.</p>');
+  renderReportInsights(m,inc,exp,cats);
   drawCategoryChart(cats);
-  drawTrendChart()
+  drawTrendChart();
+  drawSavingsChart()
+}
+function renderReportInsights(m,inc,exp,cats){
+  let el=document.getElementById('reportInsights');if(!el)return;
+  let savingsRate=inc>0?((inc-exp)/inc*100):0;
+  let entries=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+  let top=entries[0];
+  let elapsed=daysElapsedInMonth(m);
+  let dailyAvg=elapsed>0?exp/elapsed:0;
+  let isCurrentMonth=m===today().slice(0,7);
+  let projected=isCurrentMonth?dailyAvg*daysInMonth(m):exp;
+  el.innerHTML=`
+    <div class="insight"><small>Savings rate</small><b class="${savingsRate>=0?'income':'expense'}">${savingsRate.toFixed(0)}%</b></div>
+    <div class="insight"><small>Top category</small><b>${top?esc(top[0]):'—'}</b>${top?`<span class="delta muted">${money(top[1])}</span>`:''}</div>
+    <div class="insight"><small>Daily avg spend</small><b>${money(dailyAvg)}</b></div>
+    <div class="insight"><small>${isCurrentMonth?'Projected month-end spend':'Total spend'}</small><b>${money(projected)}</b></div>
+  `
 }
 function setupCanvas(canvas){let ratio=window.devicePixelRatio||1;let w=canvas.clientWidth||600,h=canvas.clientHeight||220;canvas.width=w*ratio;canvas.height=h*ratio;let ctx=canvas.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);return{ctx,w,h}}
 function drawCategoryChart(cats){
@@ -160,6 +258,34 @@ function drawTrendChart(){
   ctx.fillStyle='#667085';ctx.textAlign='right';ctx.fillText(Math.round(max),padL-6,padT+10);ctx.fillText('0',padL-6,padT+chartH);
   ctx.textAlign='left';ctx.fillStyle='#15803d';ctx.fillRect(padL,0,10,10);ctx.fillStyle='#172033';ctx.font='11px Arial';ctx.fillText('Income',padL+14,9);
   ctx.fillStyle='#dc2626';ctx.fillRect(padL+80,0,10,10);ctx.fillStyle='#172033';ctx.fillText('Expense',padL+94,9)
+}
+function drawSavingsChart(){
+  let canvas=document.getElementById('savingsChart');if(!canvas)return;
+  let months=lastNMonths(6);
+  let rates=months.map(m=>{
+    let inc=state.income.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
+    let exp=state.expense.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
+    return inc>0?((inc-exp)/inc*100):0
+  });
+  let {ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
+  let maxV=Math.max(...rates,0)*1.15||10;
+  let minV=Math.min(...rates,0)*1.15;
+  let padL=45,padB=30,padT=15,padR=14;let chartW=w-padL-padR,chartH=h-padT-padB;
+  let range=(maxV-minV)||1;
+  let n=months.length,gap=chartW/Math.max(n-1,1);
+  let yFor=v=>padT+chartH-((v-minV)/range)*chartH;
+  let zeroY=yFor(0);
+  ctx.strokeStyle='#d5dbea';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+chartH);ctx.lineTo(padL+chartW,padT+chartH);ctx.stroke();
+  if(minV<0){ctx.strokeStyle='#e2e8f0';ctx.beginPath();ctx.moveTo(padL,zeroY);ctx.lineTo(padL+chartW,zeroY);ctx.stroke()}
+  ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.beginPath();
+  months.forEach((mo,i)=>{let x=padL+i*gap,y=yFor(rates[i]);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});
+  ctx.stroke();ctx.lineWidth=1;
+  months.forEach((mo,i)=>{
+    let x=padL+i*gap,y=yFor(rates[i]);
+    ctx.fillStyle=rates[i]>=0?'#15803d':'#dc2626';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#172033';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(mo.slice(5)+'/'+mo.slice(2,4),x,padT+chartH+14)
+  });
+  ctx.fillStyle='#667085';ctx.textAlign='right';ctx.fillText(Math.round(maxV)+'%',padL-6,padT+10);ctx.fillText(Math.round(minV)+'%',padL-6,padT+chartH)
 }
 
 // ---------- Notifications ----------
@@ -227,8 +353,28 @@ async function tryPeriodicSync(){
 }
 
 // ---------- Backup ----------
-async function exportData(){let out=JSON.stringify(state,null,2),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([out],{type:'application/json'}));a.download='daily-tracker-backup-'+today()+'.json';a.click();localStorage.setItem('lastBackup',new Date().toISOString());refreshBackupBanner()}
-async function importData(e){let f=e.target.files[0];if(!f)return;let data=JSON.parse(await f.text());if(!data.income||!data.expense||!data.dues)return alert('Invalid backup');await clearStores();for(let k of Object.keys(state))for(let x of data[k]){let y={...x};delete y.id;await put_raw(k,y)}refresh();alert('Backup restored')}
+function blobToBase64(blob){return new Promise((res,rej)=>{if(!(blob instanceof Blob))return res(null);let r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
+function base64ToBlob(dataUrl){return fetch(dataUrl).then(r=>r.blob())}
+async function exportData(){
+  let exportState={...state};
+  exportState.documents=await Promise.all(state.documents.map(async d=>{
+    try{return {...d,blob:d.blob?await blobToBase64(d.blob):null}}
+    catch(e){return {...d,blob:null}} // skip a corrupt/unreadable file rather than failing the whole backup
+  }));
+  let out=JSON.stringify(exportState,null,2),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([out],{type:'application/json'}));a.download='daily-tracker-backup-'+today()+'.json';a.click();localStorage.setItem('lastBackup',new Date().toISOString());refreshBackupBanner()
+}
+async function importData(e){
+  let f=e.target.files[0];if(!f)return;let data=JSON.parse(await f.text());if(!data.income||!data.expense||!data.dues)return alert('Invalid backup');
+  await clearStores();
+  for(let k of Object.keys(state)){
+    for(let x of (data[k]||[])){
+      let y={...x};delete y.id;
+      if(k==='documents'&&y.blob)y.blob=await base64ToBlob(y.blob);
+      await put_raw(k,y)
+    }
+  }
+  refresh();alert('Backup restored')
+}
 function put_raw(store,obj){return new Promise((res,rej)=>{let r=db.transaction(store,'readwrite').objectStore(store).add(obj);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
 function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r()})))}
 async function clearAll(){if(confirm('Delete all finance data from this device?')){await clearStores();refresh()}}
@@ -270,20 +416,26 @@ function saveScriptConfig(){
 const SHEET_TABS={
   Income:['id','date','amount','cat','note','updatedAt'],
   Expense:['id','date','amount','cat','method','note','updatedAt'],
-  Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt']
+  Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt'],
+  Advances:['id','person','amount','direction','status','dueDate','note','updatedAt'],
+  Notes:['id','title','content','date','updatedAt']
 };
 
 function rowsToObjects(tab,rows){
   return (rows||[]).map(r=>{
     if(tab==='Income')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:r[5]?+r[5]:Date.now()};
     if(tab==='Expense')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',method:r[4]||'',note:r[5]||'',updatedAt:r[6]?+r[6]:Date.now()};
-    return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now()}
+    if(tab==='Dues')return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now()};
+    if(tab==='Advances')return{id:r[0]?+r[0]:undefined,person:r[1]||'',amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:r[5]||'',note:r[6]||'',updatedAt:r[7]?+r[7]:Date.now()};
+    return{id:r[0]?+r[0]:undefined,title:r[1]||'Untitled',content:r[2]||'',date:r[3]||today(),updatedAt:r[4]?+r[4]:Date.now()}
   })
 }
 function objectToRow(tab,x){
   if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||Date.now()];
   if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||Date.now()];
-  return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now()]
+  if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now()];
+  if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||Date.now()];
+  return[x.id,x.title,x.content||'',x.date,x.updatedAt||Date.now()]
 }
 
 // Safe two-way merge: newer updatedAt wins on shared ids; records only on one
@@ -330,7 +482,10 @@ async function syncStore(tab,storeName){
   state[storeName]=await all(storeName);
   await scriptPost(tab,state[storeName].map(x=>objectToRow(tab,x)))
 }
+let isSyncing=false,syncQueued=false;
 async function syncNow(){
+  if(isSyncing){syncQueued=true;return} // avoid two overlapping syncs racing on the same rows — queue instead
+  isSyncing=true;
   let btn=document.getElementById('syncNowBtn');if(btn)btn.disabled=true;
   try{
     if(!getScriptUrl()||!getSyncToken())throw new Error('Paste your Apps Script URL and token above first, then Save.');
@@ -338,11 +493,16 @@ async function syncNow(){
     await syncStore('Income','income');
     await syncStore('Expense','expense');
     await syncStore('Dues','dues');
+    await syncStore('Advances','advances');
+    await syncStore('Notes','notes');
     localStorage.setItem('lastSync',new Date().toISOString());
     refresh();
     updateSyncStatus('Synced ✓ — just now')
   }catch(e){updateSyncStatus('Sync failed: '+e.message)}
-  finally{if(btn)btn.disabled=false}
+  finally{
+    isSyncing=false;if(btn)btn.disabled=false;
+    if(syncQueued){syncQueued=false;syncNow()}
+  }
 }
 function refreshSyncUI(){
   let urlEl=document.getElementById('gsScriptUrlInput');if(urlEl&&!urlEl.value)urlEl.value=getScriptUrl();
