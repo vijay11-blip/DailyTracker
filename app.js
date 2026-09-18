@@ -229,69 +229,31 @@ let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDef
   document.getElementById('iDate').value=today();document.getElementById('eDate').value=today();document.getElementById('month').value=today().slice(0,7);
   await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();
   if('serviceWorker'in navigator){await navigator.serviceWorker.register('sw.js');if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}}
+  if(navigator.onLine)syncNow(); // auto-sync in the background on load; safe to skip silently if offline
 })()
 
-// ========== Google Sheets two-way sync ==========
-const SHEETS_SCOPE='https://www.googleapis.com/auth/spreadsheets';
-let gsiLoaded=false, tokenClient=null, accessToken=null, tokenExpiry=0;
 
-function loadGsi(){
-  return new Promise((resolve,reject)=>{
-    if(gsiLoaded||(window.google&&window.google.accounts&&window.google.accounts.oauth2)){gsiLoaded=true;return resolve()}
-    let s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.defer=true;
-    s.onload=()=>{gsiLoaded=true;resolve()};s.onerror=()=>reject(new Error('Could not load Google sign-in — check your internet connection.'));
-    document.head.appendChild(s)
-  })
-}
-function getClientId(){return localStorage.getItem('gsClientId')||''}
-function setClientId(v){localStorage.setItem('gsClientId',v)}
-function getSpreadsheetId(){return localStorage.getItem('gsSpreadsheetId')||''}
-function setSpreadsheetId(v){localStorage.setItem('gsSpreadsheetId',v)}
-function getSpreadsheetUrl(){return localStorage.getItem('gsSpreadsheetUrl')||''}
-function setSpreadsheetUrl(v){localStorage.setItem('gsSpreadsheetUrl',v)}
+// ========== Google Sheets two-way sync (via Apps Script Web App) ==========
+// No OAuth, no sign-in, no consent screen — just a URL + a shared secret you set yourself.
+// Built-in defaults — set once, syncs immediately on every device without
+// needing to paste anything in Settings. Anyone who views this public
+// repo's source can see these, so treat this URL+token as a shared password
+// for this Google Sheet, not a private secret.
+const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxq9dCuuI9lOuzim_NxeWF1MJ5L_s0T6LFSoTCuXUz7O_bmgJ778nXAKBiTkkw65G6ffw/exec';
+const DEFAULT_SYNC_TOKEN='dt-b574d5d72a89ae2b';
+function getScriptUrl(){return localStorage.getItem('gsScriptUrl')||DEFAULT_SCRIPT_URL}
+function setScriptUrl(v){localStorage.setItem('gsScriptUrl',v)}
+function getSyncToken(){return localStorage.getItem('gsSyncToken')||DEFAULT_SYNC_TOKEN}
+function setSyncToken(v){localStorage.setItem('gsSyncToken',v)}
 function updateSyncStatus(msg){let el=document.getElementById('syncStatus');if(el)el.textContent=msg}
 
-async function saveClientId(){
-  let v=val('gsClientIdInput').trim();
-  if(!v)return alert('Paste your Google OAuth Client ID first.');
-  setClientId(v);updateSyncStatus('Client ID saved. Click "Connect Google" next.')
-}
-
-function ensureToken(interactive){
-  let clientId=getClientId();
-  if(!clientId)return Promise.reject(new Error('No Google Client ID set — paste it above first.'));
-  if(accessToken&&Date.now()<tokenExpiry-30000)return Promise.resolve(accessToken);
-  return loadGsi().then(()=>new Promise((resolve,reject)=>{
-    tokenClient=google.accounts.oauth2.initTokenClient({
-      client_id:clientId,
-      scope:SHEETS_SCOPE,
-      callback:(resp)=>{
-        if(resp.error)return reject(new Error(resp.error));
-        accessToken=resp.access_token;tokenExpiry=Date.now()+(resp.expires_in||3600)*1000;
-        resolve(accessToken)
-      }
-    });
-    tokenClient.requestAccessToken({prompt:interactive?'consent':''})
-  }))
-}
-
-async function connectGoogle(){
-  try{
-    updateSyncStatus('Connecting…');
-    await ensureToken(true);
-    updateSyncStatus('Connected to Google. Tap "Sync Now" whenever you want to sync.')
-  }catch(e){updateSyncStatus('Connection failed: '+e.message)}
-}
-
-async function sheetsApi(path,options){
-  options=options||{};
-  let token;
-  try{token=await ensureToken(false)}catch(e){token=await ensureToken(true)}
-  let doFetch=t=>fetch('https://sheets.googleapis.com/v4/spreadsheets'+path,Object.assign({},options,{headers:Object.assign({'Authorization':'Bearer '+t,'Content-Type':'application/json'},options.headers||{})}));
-  let res=await doFetch(token);
-  if(res.status===401){accessToken=null;token=await ensureToken(true);res=await doFetch(token)}
-  if(!res.ok){let t=await res.text();throw new Error('Google Sheets error '+res.status+': '+t.slice(0,200))}
-  return res.status===204?null:res.json()
+function saveScriptConfig(){
+  let url=val('gsScriptUrlInput').trim();
+  let token=val('gsSyncTokenInput').trim();
+  if(!url)return alert('Paste your Apps Script Web App URL first.');
+  if(!token)return alert('Set a secret token (any word/phrase — must match what you put in the script).');
+  setScriptUrl(url);setSyncToken(token);
+  updateSyncStatus('Saved. Tap "Sync Now" whenever you want to sync.')
 }
 
 const SHEET_TABS={
@@ -299,18 +261,6 @@ const SHEET_TABS={
   Expense:['id','date','amount','cat','method','note','updatedAt'],
   Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt']
 };
-function colLetter(n){return String.fromCharCode(64+n)}
-
-async function ensureSpreadsheet(){
-  let id=getSpreadsheetId();
-  if(id)return id;
-  updateSyncStatus('Creating your Google Sheet…');
-  let body={properties:{title:'Daily Tracker Sync'},sheets:Object.keys(SHEET_TABS).map(t=>({properties:{title:t}}))};
-  let data=await sheetsApi('',{method:'POST',body:JSON.stringify(body)});
-  setSpreadsheetId(data.spreadsheetId);setSpreadsheetUrl(data.spreadsheetUrl);
-  for(let tab of Object.keys(SHEET_TABS))await sheetsApi('/'+data.spreadsheetId+'/values/'+encodeURIComponent(tab+'!A1')+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:[SHEET_TABS[tab]]})});
-  return data.spreadsheetId
-}
 
 function rowsToObjects(tab,rows){
   return (rows||[]).map(r=>{
@@ -344,44 +294,48 @@ function mergeRecords(localArr,remoteArr){
   return result
 }
 
-async function readTab(id,tab){
-  let cols=SHEET_TABS[tab].length;
-  let data=await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2:'+colLetter(cols)+'100000'));
-  return rowsToObjects(tab,data.values)
+async function scriptGet(tab){
+  let url=getScriptUrl(),token=getSyncToken();
+  let res=await fetch(url+'?tab='+encodeURIComponent(tab)+'&token='+encodeURIComponent(token));
+  if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
+  let data=await res.json();
+  if(data.error)throw new Error('Script error: '+data.error);
+  return data.rows||[]
 }
-async function writeTab(id,tab,arr){
-  let cols=SHEET_TABS[tab].length;
-  await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2:'+colLetter(cols)+'100000')+':clear',{method:'POST',body:'{}'});
-  if(!arr.length)return;
-  let rows=arr.map(x=>objectToRow(tab,x));
-  await sheetsApi('/'+id+'/values/'+encodeURIComponent(tab+'!A2')+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:rows})})
+async function scriptPost(tab,rows){
+  let url=getScriptUrl(),token=getSyncToken();
+  // text/plain avoids a CORS preflight that Apps Script web apps don't handle
+  let res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token,tab,rows})});
+  if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
+  let data=await res.json();
+  if(data.error)throw new Error('Script error: '+data.error)
 }
-async function syncStore(id,tab,storeName){
-  let remote=await readTab(id,tab);
+
+async function syncStore(tab,storeName){
+  let remoteRows=await scriptGet(tab);
+  let remote=rowsToObjects(tab,remoteRows);
   let merged=mergeRecords(state[storeName],remote);
   for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
   state[storeName]=await all(storeName);
-  await writeTab(id,tab,state[storeName])
+  await scriptPost(tab,state[storeName].map(x=>objectToRow(tab,x)))
 }
 async function syncNow(){
   let btn=document.getElementById('syncNowBtn');if(btn)btn.disabled=true;
   try{
+    if(!getScriptUrl()||!getSyncToken())throw new Error('Paste your Apps Script URL and token above first, then Save.');
     updateSyncStatus('Syncing…');
-    let id=await ensureSpreadsheet();
-    await syncStore(id,'Income','income');
-    await syncStore(id,'Expense','expense');
-    await syncStore(id,'Dues','dues');
+    await syncStore('Income','income');
+    await syncStore('Expense','expense');
+    await syncStore('Dues','dues');
     localStorage.setItem('lastSync',new Date().toISOString());
     refresh();
-    updateSyncStatus('Synced ✓ — just now');
-    refreshSyncUI()
+    updateSyncStatus('Synced ✓ — just now')
   }catch(e){updateSyncStatus('Sync failed: '+e.message)}
   finally{if(btn)btn.disabled=false}
 }
 function refreshSyncUI(){
-  let cidEl=document.getElementById('gsClientIdInput');if(cidEl&&!cidEl.value)cidEl.value=getClientId();
+  let urlEl=document.getElementById('gsScriptUrlInput');if(urlEl&&!urlEl.value)urlEl.value=getScriptUrl();
+  let tokenEl=document.getElementById('gsSyncTokenInput');if(tokenEl&&!tokenEl.value)tokenEl.value=getSyncToken();
   let last=localStorage.getItem('lastSync');
-  if(!accessToken)updateSyncStatus(last?('Last synced: '+new Date(last).toLocaleString()):'Not synced yet');
-  let linkEl=document.getElementById('sheetLink');
-  if(linkEl){let url=getSpreadsheetUrl();linkEl.innerHTML=url?('Sheet: <a href="'+url+'" target="_blank" rel="noopener">Open in Google Sheets</a>'):''}
+  updateSyncStatus(last?('Last synced: '+new Date(last).toLocaleString()):'Not synced yet')
 }
