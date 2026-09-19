@@ -334,6 +334,19 @@ function report(){
   drawTrendChart();
   drawSavingsChart()
 }
+function csvEscape(v){let s=String(v??'');return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function exportReportCSV(){
+  let m=val('month')||today().slice(0,7);
+  let rows=[];
+  state.income.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push({date:x.date,type:'Income',cat:x.cat||x.source||'',amount:x.amount,detail:x.note||''}));
+  state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push({date:x.date,type:'Expense',cat:x.cat||'',amount:x.amount,detail:[x.method,x.note].filter(Boolean).join(' - ')}));
+  rows.sort((a,b)=>a.date.localeCompare(b.date));
+  let header=['Date','Type','Category','Amount','Details'];
+  let lines=[header,...rows.map(r=>[r.date,r.type,r.cat,r.amount,r.detail])].map(r=>r.map(csvEscape).join(',')).join('\r\n');
+  let blob=new Blob([lines],{type:'text/csv;charset=utf-8'});
+  let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='daily-tracker-report-'+m+'.csv';a.click()
+}
+function exportReportPDF(){window.print()} // print CSS shows only the Reports section — use the browser's own "Save as PDF"
 function renderReportInsights(m,inc,exp,cats){
   let el=document.getElementById('reportInsights');if(!el)return;
   let savingsRate=inc>0?((inc-exp)/inc*100):0;
