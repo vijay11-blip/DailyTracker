@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v28';
+const CACHE = 'daily-tracker-v29';
 const ASSETS = [
   './',
   './index.html',
@@ -65,6 +65,11 @@ function cardDueDateSW(card) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const y = now.getFullYear(), m = now.getMonth();
   const mostRecentBilling = now.getDate() >= billingDay ? new Date(y, m, billingDay) : new Date(y, m - 1, billingDay);
+  if (card.cycleDays) {
+    const d = new Date(mostRecentBilling);
+    d.setDate(d.getDate() + card.cycleDays);
+    return d;
+  }
   const dueMonthOffset = card.dueDay >= billingDay ? 0 : 1;
   return new Date(mostRecentBilling.getFullYear(), mostRecentBilling.getMonth() + dueMonthOffset, card.dueDay);
 }
