@@ -84,7 +84,7 @@ async function refresh(){for(let k of Object.keys(state))state[k]=await all(k);a
 let editingIncomeId=null;
 function resetIncomeForm(){document.getElementById('iAmount').value='';document.getElementById('iCat').value='Salary';document.getElementById('iNote').value='';document.getElementById('iDate').value=today();editingIncomeId=null;document.getElementById('iSaveBtn').textContent='Save Income';document.getElementById('iCancelEdit').classList.add('hidden')}
 async function addIncome(){let amount=+val('iAmount');if(!amount)return alert('Enter amount');let obj={date:val('iDate')||today(),amount,cat:val('iCat'),note:val('iNote')};if(editingIncomeId)obj.id=editingIncomeId;await save('income',obj);resetIncomeForm();refreshAndSync()}
-function editIncome(id){let x=state.income.find(r=>r.id===id);if(!x)return;editingIncomeId=id;document.getElementById('iDate').value=x.date;document.getElementById('iAmount').value=x.amount;document.getElementById('iCat').value=x.cat||x.source||'Other';document.getElementById('iNote').value=x.note||'';document.getElementById('iSaveBtn').textContent='Update Income';document.getElementById('iCancelEdit').classList.remove('hidden');show('income',document.querySelectorAll('.tabs button')[1]);window.scrollTo(0,0)}
+function editIncome(id){let x=state.income.find(r=>r.id===id);if(!x)return;editingIncomeId=id;document.getElementById('iDate').value=x.date;document.getElementById('iAmount').value=x.amount;document.getElementById('iCat').value=x.cat||x.source||'Other';document.getElementById('iNote').value=x.note||'';document.getElementById('iSaveBtn').textContent='Update Income';document.getElementById('iCancelEdit').classList.remove('hidden');show('income',document.querySelectorAll('.nav-item')[1]);window.scrollTo(0,0)}
 function cancelIncomeEdit(){resetIncomeForm()}
 function renderIncomeList(){
   let q=(document.getElementById('iSearch')?.value||'').toLowerCase();
@@ -96,7 +96,7 @@ function renderIncomeList(){
 let editingExpenseId=null;
 function resetExpenseForm(){document.getElementById('eAmount').value='';document.getElementById('eCat').value='Food';document.getElementById('eMethod').value='Cash';document.getElementById('eNote').value='';document.getElementById('eDate').value=today();editingExpenseId=null;document.getElementById('eSaveBtn').textContent='Save Expense';document.getElementById('eCancelEdit').classList.add('hidden')}
 async function addExpense(){let amount=+val('eAmount');if(!amount)return alert('Enter amount');let obj={date:val('eDate')||today(),amount,cat:val('eCat'),method:val('eMethod'),note:val('eNote')};if(editingExpenseId)obj.id=editingExpenseId;await save('expense',obj);resetExpenseForm();refreshAndSync()}
-function editExpense(id){let x=state.expense.find(r=>r.id===id);if(!x)return;editingExpenseId=id;document.getElementById('eDate').value=x.date;document.getElementById('eAmount').value=x.amount;document.getElementById('eCat').value=x.cat||'Others';document.getElementById('eMethod').value=x.method||'Cash';document.getElementById('eNote').value=x.note||'';document.getElementById('eSaveBtn').textContent='Update Expense';document.getElementById('eCancelEdit').classList.remove('hidden');show('expense',document.querySelectorAll('.tabs button')[2]);window.scrollTo(0,0)}
+function editExpense(id){let x=state.expense.find(r=>r.id===id);if(!x)return;editingExpenseId=id;document.getElementById('eDate').value=x.date;document.getElementById('eAmount').value=x.amount;document.getElementById('eCat').value=x.cat||'Others';document.getElementById('eMethod').value=x.method||'Cash';document.getElementById('eNote').value=x.note||'';document.getElementById('eSaveBtn').textContent='Update Expense';document.getElementById('eCancelEdit').classList.remove('hidden');show('expense',document.querySelectorAll('.nav-item')[2]);window.scrollTo(0,0)}
 function cancelExpenseEdit(){resetExpenseForm()}
 function renderExpenseList(){
   let q=(document.getElementById('eSearch')?.value||'').toLowerCase();
@@ -116,7 +116,7 @@ async function addDue(){
   if(editingDueId)obj.id=editingDueId;
   await save('dues',obj);resetDueForm();refreshAndSync()
 }
-function editDue(id){let x=state.dues.find(r=>r.id===id);if(!x)return;editingDueId=id;document.getElementById('dueName').value=x.name;document.getElementById('dueAmount').value=x.amount;document.getElementById('dueDay').value=(x.days||[]).join(', ');document.getElementById('dueSaveBtn').textContent='Update Due';document.getElementById('dueCancelEdit').classList.remove('hidden');show('dues',document.querySelectorAll('.tabs button')[3]);window.scrollTo(0,0)}
+function editDue(id){let x=state.dues.find(r=>r.id===id);if(!x)return;editingDueId=id;document.getElementById('dueName').value=x.name;document.getElementById('dueAmount').value=x.amount;document.getElementById('dueDay').value=(x.days||[]).join(', ');document.getElementById('dueSaveBtn').textContent='Update Due';document.getElementById('dueCancelEdit').classList.remove('hidden');show('dues',document.querySelectorAll('.nav-item')[3]);window.scrollTo(0,0)}
 function cancelDueEdit(){resetDueForm()}
 async function deleteDue(id){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
@@ -208,7 +208,7 @@ async function addCard(){
   if(editingCardId)obj.id=editingCardId;
   await save('creditcards',obj);resetCardForm();refreshAndSync()
 }
-function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardBillingDay').value=x.billingDay||'';document.getElementById('cardCycleDays').value=x.cycleDays||'';document.getElementById('cardDueDay').value=x.cycleDays?'':x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
+function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardBillingDay').value=x.billingDay||'';document.getElementById('cardCycleDays').value=x.cycleDays||'';document.getElementById('cardDueDay').value=x.cycleDays?'':x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.nav-item')[4]);window.scrollTo(0,0)}
 function cancelCardEdit(){resetCardForm()}
 async function deleteCard(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
@@ -269,7 +269,7 @@ async function addAdvance(){
   if(editingAdvanceId)obj.id=editingAdvanceId;
   await save('advances',obj);resetAdvanceForm();refreshAndSync()
 }
-function editAdvance(id){let x=state.advances.find(r=>r.id===id);if(!x)return;editingAdvanceId=id;document.getElementById('advPerson').value=x.person;document.getElementById('advAmount').value=x.amount;document.getElementById('advDirection').value=x.direction;document.getElementById('advDueDate').value=x.dueDate||'';document.getElementById('advNote').value=x.note||'';document.getElementById('advSaveBtn').textContent='Update Advance';document.getElementById('advCancelEdit').classList.remove('hidden');show('advances',document.querySelectorAll('.tabs button')[5]);window.scrollTo(0,0)}
+function editAdvance(id){let x=state.advances.find(r=>r.id===id);if(!x)return;editingAdvanceId=id;document.getElementById('advPerson').value=x.person;document.getElementById('advAmount').value=x.amount;document.getElementById('advDirection').value=x.direction;document.getElementById('advDueDate').value=x.dueDate||'';document.getElementById('advNote').value=x.note||'';document.getElementById('advSaveBtn').textContent='Update Advance';document.getElementById('advCancelEdit').classList.remove('hidden');show('advances',document.querySelectorAll('.nav-item')[5]);window.scrollTo(0,0)}
 function cancelAdvanceEdit(){resetAdvanceForm()}
 async function toggleAdvanceStatus(id){
   let x=state.advances.find(a=>a.id===id);if(!x)return;
@@ -328,7 +328,7 @@ async function addNote(){
   if(editingNoteId)obj.id=editingNoteId;
   await save('notes',obj);resetNoteForm();refreshAndSync()
 }
-function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;document.getElementById('noteTitle').value=x.title;document.getElementById('noteContent').value=x.content||'';document.getElementById('noteSaveBtn').textContent='Update Note';document.getElementById('noteCancelEdit').classList.remove('hidden');show('notes',document.querySelectorAll('.tabs button')[7]);window.scrollTo(0,0)}
+function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;document.getElementById('noteTitle').value=x.title;document.getElementById('noteContent').value=x.content||'';document.getElementById('noteSaveBtn').textContent='Update Note';document.getElementById('noteCancelEdit').classList.remove('hidden');show('notes',document.querySelectorAll('.nav-item')[7]);window.scrollTo(0,0)}
 function cancelNoteEdit(){resetNoteForm()}
 function renderNotes(){
   let rows=state.notes.slice().sort((a,b)=>b.id-a.id);
@@ -389,7 +389,9 @@ function renderDashInsights(){
     <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>
   `
 }
-function show(id,btn){document.querySelectorAll('main>section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');if(id==='reports')report()}
+function show(id,btn){document.querySelectorAll('main>section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));btn.classList.add('active');closeMenu();if(id==='reports')report()}
+function toggleMenu(){document.getElementById('navOverlay').classList.toggle('hidden');document.getElementById('navDrawer').classList.toggle('hidden')}
+function closeMenu(){document.getElementById('navOverlay').classList.add('hidden');document.getElementById('navDrawer').classList.add('hidden')}
 
 // ---------- Reports + charts ----------
 function lastNMonths(n){let out=[];let now=new Date();for(let i=n-1;i>=0;i--){let dt=new Date(now.getFullYear(),now.getMonth()-i,1);out.push(ymOf(dt))}return out}
