@@ -605,12 +605,53 @@ function put_raw(store,obj){return new Promise((res,rej)=>{let r=db.transaction(
 function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r()})))}
 async function clearAll(){if(confirm('Delete all finance data from this device?')){revokeAllDocumentUrls();await clearStores();refresh()}}
 
+// ---------- App Lock (PIN, hashed — never stored or synced in plain text) ----------
+async function sha256Hex(text){
+  let buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')
+}
+function getLockHash(){return localStorage.getItem('appLockHash')||''}
+function setLockHash(h){localStorage.setItem('appLockHash',h)}
+function clearLockHash(){localStorage.removeItem('appLockHash')}
+async function tryUnlock(){
+  let pin=document.getElementById('lockPinInput').value;
+  let hash=await sha256Hex(pin);
+  if(hash&&hash===getLockHash()){
+    document.documentElement.classList.remove('app-locked');
+    document.getElementById('lockScreen').classList.add('hidden');
+    document.getElementById('lockPinInput').value='';
+    document.getElementById('lockError').textContent=''
+  }else{
+    document.getElementById('lockError').textContent='Incorrect PIN — try again.';
+    document.getElementById('lockPinInput').value='';
+    document.getElementById('lockPinInput').focus()
+  }
+}
+async function setAppLock(){
+  let pin=val('newPinInput'),confirmPin=val('confirmPinInput');
+  if(!pin||pin.length<4)return alert('PIN must be at least 4 characters.');
+  if(pin!==confirmPin)return alert('PINs do not match.');
+  setLockHash(await sha256Hex(pin));
+  document.getElementById('newPinInput').value='';document.getElementById('confirmPinInput').value='';
+  refreshLockStatus();
+  alert('App lock set. This device will ask for this PIN next time you open the app.')
+}
+function removeAppLock(){
+  if(!confirm('Remove the app lock? Anyone opening this app on this device will see your data without a PIN.'))return;
+  clearLockHash();refreshLockStatus()
+}
+function refreshLockStatus(){
+  let has=!!getLockHash();
+  let el=document.getElementById('lockStatusText');if(el)el.textContent=has?'🔒 PIN is set on this device':'Not set';
+  let btn=document.getElementById('removeLockBtn');if(btn)btn.classList.toggle('hidden',!has)
+}
+
 let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert('On Chrome Android, use the browser menu → Add to Home screen.')}
 
 (async()=>{
   await openDB();
   document.getElementById('iDate').value=today();document.getElementById('eDate').value=today();document.getElementById('month').value=today().slice(0,7);
-  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();autoBackupIfDue();
+  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();refreshLockStatus();autoBackupIfDue();
   if('serviceWorker'in navigator){await navigator.serviceWorker.register('sw.js');if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}}
   if(navigator.onLine)syncNow(); // auto-sync in the background on load; safe to skip silently if offline
 })()
