@@ -150,6 +150,29 @@ function dueRemainingLabel(day){
   if(diff===0)return'⏰ Due today';
   return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
 }
+function remainingLabelFromDays(diff){
+  if(diff>0)return `⏳ Due in ${diff} day${diff===1?'':'s'}`;
+  if(diff===0)return'⏰ Due today';
+  return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
+}
+// A card's due date isn't always "this month": if the due day falls earlier
+// in the calendar than the billing day (e.g. billed on the 14th, due on the
+// 3rd), that due date belongs to the month AFTER billing, not the current
+// month. This finds the actual due date for the most recent billing cycle.
+function cardDueDate(x){
+  let billingDay=x.billingDay||x.dueDay;
+  let now=new Date();now.setHours(0,0,0,0);
+  let y=now.getFullYear(),m=now.getMonth();
+  let mostRecentBilling=now.getDate()>=billingDay?new Date(y,m,billingDay):new Date(y,m-1,billingDay);
+  let dueMonthOffset=x.dueDay>=billingDay?0:1;
+  return new Date(mostRecentBilling.getFullYear(),mostRecentBilling.getMonth()+dueMonthOffset,x.dueDay)
+}
+function cardDaysUntilDue(x){
+  let due=cardDueDate(x);due.setHours(0,0,0,0);
+  let today=new Date();today.setHours(0,0,0,0);
+  return Math.round((due-today)/86400000)
+}
+function cardDueLabel(x){return remainingLabelFromDays(cardDaysUntilDue(x))}
 function renderDues(){
   let ym=today().slice(0,7);
   dueList.innerHTML=state.dues.map(x=>{
@@ -215,7 +238,7 @@ function renderCards(){
       ?`<span class="income">✓ Fully paid this cycle</span>`
       :`Outstanding: ${money(x.balance)}`;
     let billingInfo=x.billingDay?`<span class="muted" style="min-width:120px">Billing day ${x.billingDay}</span>`:'';
-    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}<span class="pill">Due day ${x.dueDay}: ${dueRemainingLabel(x.dueDay)}</span><span class="actions">${remaining>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
+    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}<span class="pill">${formatDueDate(ymd(cardDueDate(x)))}: ${cardDueLabel(x)}</span><span class="actions">${remaining>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
   }).join('')||'<p class="muted">💳 No credit cards added yet.</p>';
   let totalBalance=state.creditcards.reduce((a,x)=>a+cardRemaining(x),0);
   let totalLimit=state.creditcards.reduce((a,x)=>a+(x.limit||0),0);
@@ -477,17 +500,29 @@ async function enableNotifications(){
   if(perm==='granted'){checkDueNotifications();tryPeriodicSync()}
   else if(perm==='denied')alert('Notifications are blocked. Enable them from your browser or system app settings to get due reminders.')
 }
+const REMINDER_LEAD_DAYS=10; // start nudging this many days before something's due, not just on the day
 async function checkDueNotifications(){
   if(!('Notification'in window)||Notification.permission!=='granted'||!('serviceWorker'in navigator))return;
   let reg=await navigator.serviceWorker.ready;let ym=today().slice(0,7);let todayDay=new Date().getDate();let todayStr=today();
   let notified=JSON.parse(localStorage.getItem('notifiedDues')||'{}');
   for(let x of state.dues){
     for(let d of (x.days||[])){
-      let dateStr=ym+'-'+pad(d);let key=x.id+'-'+dateStr;
-      if(d<=todayDay&&!(x.paidDates||[]).includes(dateStr)&&notified[key]!==todayStr){
-        reg.showNotification('Due reminder: '+x.name,{body:money(x.amount)+' was due on day '+d+' this month.',tag:'due-'+key,icon:'icon-192.png',badge:'icon-192.png'});
+      let dateStr=ym+'-'+pad(d);let key='due-'+x.id+'-'+dateStr;
+      if((d-todayDay)<=REMINDER_LEAD_DAYS&&!(x.paidDates||[]).includes(dateStr)&&notified[key]!==todayStr){
+        reg.showNotification('Due reminder: '+x.name,{body:money(x.amount)+' — due on day '+d+' this month.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
         notified[key]=todayStr
       }
+    }
+  }
+  for(let x of state.creditcards){
+    let remaining=cardRemaining(x);
+    if(remaining<=0)continue;
+    let daysUntil=cardDaysUntilDue(x);
+    let dueDateStr=ymd(cardDueDate(x));
+    let key='card-'+x.id+'-'+dueDateStr;
+    if(daysUntil<=REMINDER_LEAD_DAYS&&notified[key]!==todayStr){
+      reg.showNotification('Card payment due: '+x.cardName,{body:money(remaining)+' — due '+formatDueDate(dueDateStr)+'.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
+      notified[key]=todayStr
     }
   }
   localStorage.setItem('notifiedDues',JSON.stringify(notified))
