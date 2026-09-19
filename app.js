@@ -1,4 +1,4 @@
-const DB='financeDB', VER=3; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],notes:[],documents:[]}, deferredPrompt=null;
+const DB='financeDB', VER=4; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],notes:[],documents:[]}, deferredPrompt=null;
 const money=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const pad=n=>String(n).padStart(2,'0');
@@ -8,12 +8,23 @@ const pad=n=>String(n).padStart(2,'0');
 // or month-trend charts permanently off by one).
 function ymd(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
 function ymOf(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)}
-function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','notes','documents'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
-function del(store,id){deleteRecord(store,id).then(refreshAndSync)}
+// Stores that go through Google Sheets sync. Deleting a record here must be
+// remembered as a tombstone — otherwise the very next sync sees the item
+// still sitting in the Sheet, has no way to know it was deleted on purpose,
+// and quietly restores it (the "deleted item comes back" bug).
+const SYNCED_STORES=new Set(['income','expense','dues','creditcards','advances','notes']);
+function addTombstone(storeName,recordId){
+  if(!SYNCED_STORES.has(storeName)||recordId==null)return Promise.resolve();
+  let obj={id:storeName+':'+recordId,store:storeName,recordId,deletedAt:Date.now()};
+  return new Promise(res=>{let r=db.transaction('tombstones','readwrite').objectStore('tombstones').put(obj);r.onsuccess=()=>res();r.onerror=()=>res()})
+}
+async function deleteWithTombstone(storeName,id){await addTombstone(storeName,id);await deleteRecord(storeName,id)}
+function del(store,id){deleteWithTombstone(store,id).then(refreshAndSync)}
 let syncDebounceTimer=null;
 function refreshAndSync(){
   return refresh().then(()=>{
@@ -64,7 +75,7 @@ function cancelIncomeEdit(){resetIncomeForm()}
 function renderIncomeList(){
   let q=(document.getElementById('iSearch')?.value||'').toLowerCase();
   let rows=state.income.filter(x=>!q||[x.date,x.cat||x.source,x.note].some(v=>String(v||'').toLowerCase().includes(q))).slice().sort((a,b)=>b.date.localeCompare(a.date));
-  incomeList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">No income records.</p>'
+  incomeList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">💰 No income records yet — add your first one above.</p>'
 }
 
 // ---------- Expense ----------
@@ -76,7 +87,7 @@ function cancelExpenseEdit(){resetExpenseForm()}
 function renderExpenseList(){
   let q=(document.getElementById('eSearch')?.value||'').toLowerCase();
   let rows=state.expense.filter(x=>!q||[x.date,x.cat,x.method,x.note].some(v=>String(v||'').toLowerCase().includes(q))).slice().sort((a,b)=>b.date.localeCompare(a.date));
-  expenseList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${x.method?'('+esc(x.method)+')':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="del('expense',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">No expense records.</p>'
+  expenseList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${x.method?'('+esc(x.method)+')':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="del('expense',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">💸 No expense records yet — add your first one above.</p>'
 }
 
 // ---------- Dues (multiple due days per bill) ----------
@@ -96,8 +107,8 @@ function cancelDueEdit(){resetDueForm()}
 async function deleteDue(id){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
   if(!confirm('Delete "'+x.name+'"? This also removes any expenses it auto-logged when marked paid.'))return;
-  for(let expId of Object.values(x.linkedExpenses||{}))await deleteRecord('expense',expId);
-  await deleteRecord('dues',id);refreshAndSync()
+  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',expId);
+  await deleteWithTombstone('dues',id);refreshAndSync()
 }
 async function toggleDueDay(id,dateStr){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
@@ -108,7 +119,7 @@ async function toggleDueDay(id,dateStr){
     x.paidDates.splice(i,1);
     delete x.paymentDates[dateStr];
     let expId=x.linkedExpenses[dateStr];
-    if(expId){await deleteRecord('expense',expId);delete x.linkedExpenses[dateStr]}
+    if(expId){await deleteWithTombstone('expense',expId);delete x.linkedExpenses[dateStr]}
   }else{
     // marking paid — record today as the actual payment date, and auto-log a matching expense
     x.paidDates.push(dateStr);
@@ -121,40 +132,40 @@ async function toggleDueDay(id,dateStr){
 function formatDueDate(dateStr){let d=new Date(dateStr+'T00:00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
 function dueRemainingLabel(day){
   let diff=day-new Date().getDate();
-  if(diff>0)return `Due in ${diff} day${diff===1?'':'s'}`;
-  if(diff===0)return'Due today';
-  return `Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
+  if(diff>0)return `⏳ Due in ${diff} day${diff===1?'':'s'}`;
+  if(diff===0)return'⏰ Due today';
+  return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
 }
 function renderDues(){
   let ym=today().slice(0,7);
   dueList.innerHTML=state.dues.map(x=>{
-    let pills=(x.days||[]).map(d=>{let dateStr=ym+'-'+pad(d);let paid=(x.paidDates||[]).includes(dateStr);let paidOn=x.paymentDates&&x.paymentDates[dateStr];return `<span class="pill ${paid?'paid':''}" style="cursor:pointer" onclick="toggleDueDay(${x.id},'${dateStr}')">${formatDueDate(dateStr)}: ${paid?'Paid'+(paidOn?' on '+formatDueDate(paidOn):''):dueRemainingLabel(d)}</span>`}).join(' ');
+    let pills=(x.days||[]).map(d=>{let dateStr=ym+'-'+pad(d);let paid=(x.paidDates||[]).includes(dateStr);let paidOn=x.paymentDates&&x.paymentDates[dateStr];return `<span class="pill ${paid?'paid':''}" style="cursor:pointer" onclick="toggleDueDay(${x.id},'${dateStr}')">${formatDueDate(dateStr)}: ${paid?'✓ Paid'+(paidOn?' on '+formatDueDate(paidOn):''):dueRemainingLabel(d)}</span>`}).join(' ');
     return `<div class="due-flex"><b style="min-width:140px">${esc(x.name)}</b><span style="min-width:80px">${money(x.amount)}</span><span class="actions" style="flex:1;flex-wrap:wrap">${pills}</span><span class="actions"><button class="btn" onclick="editDue(${x.id})">Edit</button><button class="btn danger" onclick="deleteDue(${x.id})">Delete</button></span></div>`
-  }).join('')||'<p class="muted">No monthly dues.</p>';
+  }).join('')||'<p class="muted">📅 No monthly dues yet — add a bill above.</p>';
   let pending=[];
   for(let x of state.dues)for(let d of (x.days||[])){let dateStr=ym+'-'+pad(d);if(!(x.paidDates||[]).includes(dateStr))pending.push({name:x.name,amount:x.amount,day:d,dateStr})}
   pending.sort((a,b)=>a.day-b.day);
-  dashDues.innerHTML=pending.map(x=>`<div class="row"><b>${esc(x.name)}</b><span>${money(x.amount)}</span><span>${formatDueDate(x.dateStr)}</span><span class="pill">${dueRemainingLabel(x.day)}</span></div>`).join('')||'<p class="muted">No pending dues.</p>'
+  dashDues.innerHTML=pending.map(x=>`<div class="row"><b>${esc(x.name)}</b><span>${money(x.amount)}</span><span>${formatDueDate(x.dateStr)}</span><span class="pill">${dueRemainingLabel(x.day)}</span></div>`).join('')||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
 }
 
 // ---------- Credit Cards (balance + due date + payment tracking) ----------
 let editingCardId=null;
-function resetCardForm(){document.getElementById('cardName').value='';document.getElementById('cardBalance').value='';document.getElementById('cardMinDue').value='';document.getElementById('cardDueDay').value='';editingCardId=null;document.getElementById('cardSaveBtn').textContent='Save Card';document.getElementById('cardCancelEdit').classList.add('hidden')}
+function resetCardForm(){document.getElementById('cardName').value='';document.getElementById('cardBalance').value='';document.getElementById('cardLimit').value='';document.getElementById('cardDueDay').value='';editingCardId=null;document.getElementById('cardSaveBtn').textContent='Save Card';document.getElementById('cardCancelEdit').classList.add('hidden')}
 async function addCard(){
-  let cardName=val('cardName'),balance=+val('cardBalance'),minDue=val('cardMinDue')?+val('cardMinDue'):null,dueDay=parseInt(val('cardDueDay'),10);
-  if(!cardName||!balance||!dueDay||dueDay<1||dueDay>31)return alert('Enter card name, current balance and a valid due day (1-31)');
+  let cardName=val('cardName'),balance=+val('cardBalance'),limit=val('cardLimit')?+val('cardLimit'):null,dueDay=parseInt(val('cardDueDay'),10);
+  if(!cardName||!balance||!dueDay||dueDay<1||dueDay>31)return alert('Enter card name, current outstanding and a valid due day (1-31)');
   let existing=editingCardId?state.creditcards.find(c=>c.id===editingCardId):null;
-  let obj={cardName,balance,minDue,dueDay,paidDates:existing?existing.paidDates||[]:[],paymentDates:existing?existing.paymentDates||{}:{},linkedExpenses:existing?existing.linkedExpenses||{}:{}};
+  let obj={cardName,balance,limit,dueDay,paidDates:existing?existing.paidDates||[]:[],paymentDates:existing?existing.paymentDates||{}:{},linkedExpenses:existing?existing.linkedExpenses||{}:{}};
   if(editingCardId)obj.id=editingCardId;
   await save('creditcards',obj);resetCardForm();refreshAndSync()
 }
-function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardMinDue').value=x.minDue||'';document.getElementById('cardDueDay').value=x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
+function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardDueDay').value=x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
 function cancelCardEdit(){resetCardForm()}
 async function deleteCard(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
   if(!confirm('Delete "'+x.cardName+'"? This also removes any expenses it auto-logged when marked paid.'))return;
-  for(let expId of Object.values(x.linkedExpenses||{}))await deleteRecord('expense',expId);
-  await deleteRecord('creditcards',id);refreshAndSync()
+  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',expId);
+  await deleteWithTombstone('creditcards',id);refreshAndSync()
 }
 async function toggleCardPaid(id,dateStr){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
@@ -163,7 +174,7 @@ async function toggleCardPaid(id,dateStr){
   if(i>=0){
     x.paidDates.splice(i,1);delete x.paymentDates[dateStr];
     let expId=x.linkedExpenses[dateStr];
-    if(expId){await deleteRecord('expense',expId);delete x.linkedExpenses[dateStr]}
+    if(expId){await deleteWithTombstone('expense',expId);delete x.linkedExpenses[dateStr]}
   }else{
     x.paidDates.push(dateStr);x.paymentDates[dateStr]=today();
     let expId=await save('expense',{date:dateStr,amount:x.balance,cat:'Bills',method:'',note:x.cardName+' card payment (auto)'});
@@ -177,12 +188,14 @@ function renderCards(){
     let dateStr=ym+'-'+pad(x.dueDay);
     let paid=(x.paidDates||[]).includes(dateStr);
     let paidOn=x.paymentDates&&x.paymentDates[dateStr];
-    let statusText=paid?'Paid'+(paidOn?' on '+formatDueDate(paidOn):''):dueRemainingLabel(x.dueDay);
-    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:100px">Bal: ${money(x.balance)}</span>${x.minDue?`<span class="muted" style="min-width:90px">Min: ${money(x.minDue)}</span>`:''}<span class="pill ${paid?'paid':''}" style="cursor:pointer" onclick="toggleCardPaid(${x.id},'${dateStr}')">${formatDueDate(dateStr)}: ${statusText}</span><span class="actions"><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
-  }).join('')||'<p class="muted">No credit cards added yet.</p>';
+    let statusText=paid?'✓ Paid'+(paidOn?' on '+formatDueDate(paidOn):''):dueRemainingLabel(x.dueDay);
+    let util=x.limit?Math.round(x.balance/x.limit*100):null;
+    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:100px">Outstanding: ${money(x.balance)}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}<span class="pill ${paid?'paid':''}" style="cursor:pointer" onclick="toggleCardPaid(${x.id},'${dateStr}')">${formatDueDate(dateStr)}: ${statusText}</span><span class="actions"><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
+  }).join('')||'<p class="muted">💳 No credit cards added yet.</p>';
   let totalBalance=state.creditcards.reduce((a,x)=>a+x.balance,0);
+  let totalLimit=state.creditcards.reduce((a,x)=>a+(x.limit||0),0);
   let cardSummaryEl=document.getElementById('cardSummary');
-  if(cardSummaryEl)cardSummaryEl.innerHTML=`<div class="card"><small>Total Credit Card Balance</small><div class="amount expense">${money(totalBalance)}</div></div>`
+  if(cardSummaryEl)cardSummaryEl.innerHTML=`<div class="card"><small>Total Outstanding</small><div class="amount expense">${money(totalBalance)}</div></div>${totalLimit?`<div class="card"><small>Total Credit Limit</small><div class="amount">${money(totalLimit)}</div></div>`:''}`
 }
 
 // ---------- Advances (money lent/borrowed) ----------
@@ -244,8 +257,8 @@ function renderAdvances(){
     let amountLine=paidSoFar>0&&x.status==='pending'
       ?`${x.direction==='given'?'They owe':'You owe'} ${money(remaining)} <span class="muted" style="font-weight:400">(${money(paidSoFar)} of ${money(x.amount)} repaid)</span>`
       :`${x.direction==='given'?'They owe':'You owe'} ${money(x.amount)}`;
-    return `<div class="row"><span>${esc(x.person)}</span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${safeDisplayDate(x.dueDate)} ${x.note?esc(x.note):''}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id})">Delete</button></span></div>`
-  }).join('')||'<p class="muted">No advances yet.</p>'
+    return `<div class="row"><span>${esc(x.person)}</span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${safeDisplayDate(x.dueDate)} ${x.note?esc(x.note):''}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'✓ Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'⏳ Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id})">Delete</button></span></div>`
+  }).join('')||'<p class="muted">🤝 No advances yet — track money lent or borrowed here.</p>'
 }
 
 // ---------- Notes ----------
@@ -261,7 +274,7 @@ function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingN
 function cancelNoteEdit(){resetNoteForm()}
 function renderNotes(){
   let rows=state.notes.slice().sort((a,b)=>b.id-a.id);
-  noteList.innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">No notes yet.</p>'
+  noteList.innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">📝 No notes yet.</p>'
 }
 
 // ---------- Documents ----------
@@ -287,7 +300,7 @@ async function addDocument(){
 }
 function renderDocuments(){
   let rows=state.documents.slice().sort((a,b)=>b.id-a.id);
-  documentList.innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="deleteDocument(${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">No documents yet.</p>'
+  documentList.innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="deleteDocument(${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">📄 No documents yet.</p>'
 }
 
 
@@ -560,9 +573,10 @@ const SHEET_TABS={
   Income:['id','date','amount','cat','note','updatedAt'],
   Expense:['id','date','amount','cat','method','note','updatedAt'],
   Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt','paymentDates'],
-  CreditCards:['id','cardName','balance','minDue','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt'],
+  CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt'],
   Advances:['id','person','amount','direction','status','dueDate','note','updatedAt','settledDate','payments'],
-  Notes:['id','title','content','date','updatedAt']
+  Notes:['id','title','content','date','updatedAt'],
+  Tombstones:['id','store','recordId','deletedAt']
 };
 
 function rowsToObjects(tab,rows){
@@ -570,8 +584,9 @@ function rowsToObjects(tab,rows){
     if(tab==='Income')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:r[5]?+r[5]:Date.now()};
     if(tab==='Expense')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Others',method:r[4]||'',note:r[5]||'',updatedAt:r[6]?+r[6]:Date.now()};
     if(tab==='Dues')return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})()};
-    if(tab==='CreditCards')return{id:r[0]?+r[0]:undefined,cardName:r[1]||'Untitled',balance:+r[2]||0,minDue:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:String(r[5]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[6]||'{}')}catch(e){return{}}})(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})(),updatedAt:r[8]?+r[8]:Date.now()};
+    if(tab==='CreditCards')return{id:r[0]?+r[0]:undefined,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:String(r[5]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[6]||'{}')}catch(e){return{}}})(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})(),updatedAt:r[8]?+r[8]:Date.now()};
     if(tab==='Advances')return{id:r[0]?+r[0]:undefined,person:r[1]||'',amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:r[5]||'',note:r[6]||'',updatedAt:r[7]?+r[7]:Date.now(),settledDate:r[8]||undefined,payments:(()=>{try{return JSON.parse(r[9]||'[]')}catch(e){return[]}})()};
+    if(tab==='Tombstones')return{id:r[0]||'',store:r[1]||'',recordId:r[2]?+r[2]:undefined,deletedAt:r[3]?+r[3]:0};
     return{id:r[0]?+r[0]:undefined,title:r[1]||'Untitled',content:r[2]||'',date:r[3]||today(),updatedAt:r[4]?+r[4]:Date.now()}
   })
 }
@@ -579,14 +594,17 @@ function objectToRow(tab,x){
   if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||Date.now()];
   if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||Date.now()];
   if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now(),JSON.stringify(x.paymentDates||{})];
-  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.minDue||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||Date.now()];
+  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||Date.now()];
   if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||Date.now(),x.settledDate||'',JSON.stringify(x.payments||[])];
+  if(tab==='Tombstones')return[x.id,x.store,x.recordId,x.deletedAt];
   return[x.id,x.title,x.content||'',x.date,x.updatedAt||Date.now()]
 }
 
 // Safe two-way merge: newer updatedAt wins on shared ids; records only on one
-// side are added to the other. Never auto-deletes — deleting stays a manual,
-// explicit action on whichever side you deleted it.
+// side are added to the other. This alone never deletes anything — that's
+// handled separately via tombstones (see syncNow), since a record missing
+// from one side is ambiguous: it might mean "deleted there" or just "that
+// device hasn't synced it in yet".
 function mergeRecords(localArr,remoteArr){
   let result=localArr.map(r=>Object.assign({},r));
   let byId=new Map(result.filter(r=>r.id!=null).map(r=>[r.id,r]));
@@ -638,16 +656,39 @@ async function syncNow(){
     updateSyncStatus('Syncing…');
     // Single round-trip down: every tab's rows in one response.
     let remoteTabs=await withRetry(()=>scriptGetAll(),'Fetching');
+
+    // Merge this device's delete history with whatever other devices have
+    // recorded, so a deletion made anywhere eventually applies everywhere.
+    let remoteTombstones=rowsToObjects('Tombstones',remoteTabs.Tombstones);
+    let localTombstones=await all('tombstones');
+    let tombMap=new Map();
+    for(let t of[...localTombstones,...remoteTombstones]){
+      let existing=tombMap.get(t.id);
+      if(!existing||t.deletedAt>existing.deletedAt)tombMap.set(t.id,t)
+    }
+    for(let t of tombMap.values())await putExact('tombstones',t);
+
     for(let tab of Object.keys(TAB_STORE_MAP)){
       let storeName=TAB_STORE_MAP[tab];
       let remote=rowsToObjects(tab,remoteTabs[tab]);
       let merged=mergeRecords(state[storeName],remote);
+      // A tombstoned record is dropped unless it was genuinely edited again
+      // after the deletion (updatedAt newer than deletedAt) — that counts as
+      // an intentional recreation, not a stale record coming back to life.
+      merged=merged.filter(obj=>{
+        let tomb=obj.id!=null?tombMap.get(storeName+':'+obj.id):null;
+        return!tomb||(obj.updatedAt||0)>tomb.deletedAt
+      });
+      let keepIds=new Set(merged.filter(o=>o.id!=null).map(o=>o.id));
+      for(let existing of state[storeName])if(existing.id!=null&&!keepIds.has(existing.id))await deleteRecord(storeName,existing.id);
       for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
       state[storeName]=await all(storeName)
     }
-    // Single round-trip up: every tab's rows in one request.
+
+    // Single round-trip up: every tab's rows in one request, tombstones included.
     let outgoing={};
     for(let tab of Object.keys(TAB_STORE_MAP))outgoing[tab]=state[TAB_STORE_MAP[tab]].map(x=>objectToRow(tab,x));
+    outgoing.Tombstones=[...tombMap.values()].map(x=>objectToRow('Tombstones',x));
     await withRetry(()=>scriptPostAll(outgoing),'Saving');
     localStorage.setItem('lastSync',new Date().toISOString());
     refresh();
