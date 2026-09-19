@@ -606,18 +606,18 @@ function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(
 async function clearAll(){if(confirm('Delete all finance data from this device?')){revokeAllDocumentUrls();await clearStores();refresh()}}
 
 // ---------- App Lock (PIN, hashed — never stored or synced in plain text) ----------
-// Default PIN "2425" applies on any device that hasn't set its own —
-// localStorage distinguishes "never touched" (use default) from an explicit
-// empty string (lock deliberately turned off) from a real custom hash.
-const DEFAULT_LOCK_HASH='884787790b634bcde4b97eb6d7462ff0ace24c6d58be79204fca57d61dfa4114';
+// No default PIN — the lock only ever activates if you explicitly set one AND
+// switch it on below. "appLockHash" holds the PIN; "appLockEnabled" is a
+// separate on/off switch, so you can toggle the lock off temporarily without
+// having to forget and re-set your PIN each time.
 async function sha256Hex(text){
   let buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')
 }
-function getLockHash(){let stored=localStorage.getItem('appLockHash');return stored===null?DEFAULT_LOCK_HASH:stored}
-function isDefaultLock(){return localStorage.getItem('appLockHash')===null}
+function getLockHash(){return localStorage.getItem('appLockHash')||''}
 function setLockHash(h){localStorage.setItem('appLockHash',h)}
-function clearLockHash(){localStorage.setItem('appLockHash','')} // explicit empty string = "no lock, on purpose" (distinct from never-set, which falls back to the default PIN)
+function clearLockHash(){localStorage.removeItem('appLockHash')}
+function isLockEnabled(){return localStorage.getItem('appLockEnabled')==='true'&&!!getLockHash()}
 async function tryUnlock(){
   let pin=document.getElementById('lockPinInput').value;
   let hash=await sha256Hex(pin);
@@ -636,20 +636,30 @@ async function setAppLock(){
   let pin=val('newPinInput'),confirmPin=val('confirmPinInput');
   if(!pin||pin.length<4)return alert('PIN must be at least 4 characters.');
   if(pin!==confirmPin)return alert('PINs do not match.');
-  if(!confirm('Lock this app with this PIN? You will need to enter it every time you open the app on this device.'))return;
+  if(!confirm('Set this PIN and turn the lock on? You will need to enter it every time you open the app on this device.'))return;
   setLockHash(await sha256Hex(pin));
+  localStorage.setItem('appLockEnabled','true');
   document.getElementById('newPinInput').value='';document.getElementById('confirmPinInput').value='';
   refreshLockStatus();
-  alert('App lock set. This device will ask for this PIN next time you open the app.')
+  alert('App lock is on. This device will ask for this PIN next time you open the app.')
+}
+function toggleLockEnabled(){
+  if(!getLockHash())return alert('Set a PIN first, then you can switch the lock on.');
+  let nowOn=!isLockEnabled();
+  localStorage.setItem('appLockEnabled',nowOn?'true':'false');
+  refreshLockStatus()
 }
 function removeAppLock(){
-  if(!confirm('Remove the app lock? Anyone opening this app on this device will see your data without a PIN.'))return;
-  clearLockHash();refreshLockStatus()
+  if(!confirm('Remove the PIN entirely? You\'ll need to set a new one to lock this app again.'))return;
+  clearLockHash();localStorage.removeItem('appLockEnabled');refreshLockStatus()
 }
 function refreshLockStatus(){
+  let hasHash=!!getLockHash(),enabled=isLockEnabled();
   let el=document.getElementById('lockStatusText');
-  if(el)el.textContent=isDefaultLock()?'🔒 Using the default PIN — set your own below':getLockHash()?'🔒 Custom PIN is set on this device':'Unlocked — no PIN required';
-  let btn=document.getElementById('removeLockBtn');if(btn)btn.classList.toggle('hidden',!getLockHash())
+  if(el)el.textContent=!hasHash?'No PIN set — app is unlocked':enabled?'🔒 Lock is ON':'🔓 PIN is saved but lock is OFF';
+  let btn=document.getElementById('removeLockBtn');if(btn)btn.classList.toggle('hidden',!hasHash);
+  let toggleBtn=document.getElementById('toggleLockBtn');
+  if(toggleBtn){toggleBtn.classList.toggle('hidden',!hasHash);toggleBtn.textContent=enabled?'Turn Lock Off':'Turn Lock On'}
 }
 
 let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert('On Chrome Android, use the browser menu → Add to Home screen.')}
