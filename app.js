@@ -606,13 +606,18 @@ function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(
 async function clearAll(){if(confirm('Delete all finance data from this device?')){revokeAllDocumentUrls();await clearStores();refresh()}}
 
 // ---------- App Lock (PIN, hashed — never stored or synced in plain text) ----------
+// Default PIN "2425" applies on any device that hasn't set its own —
+// localStorage distinguishes "never touched" (use default) from an explicit
+// empty string (lock deliberately turned off) from a real custom hash.
+const DEFAULT_LOCK_HASH='884787790b634bcde4b97eb6d7462ff0ace24c6d58be79204fca57d61dfa4114';
 async function sha256Hex(text){
   let buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')
 }
-function getLockHash(){return localStorage.getItem('appLockHash')||''}
+function getLockHash(){let stored=localStorage.getItem('appLockHash');return stored===null?DEFAULT_LOCK_HASH:stored}
+function isDefaultLock(){return localStorage.getItem('appLockHash')===null}
 function setLockHash(h){localStorage.setItem('appLockHash',h)}
-function clearLockHash(){localStorage.removeItem('appLockHash')}
+function clearLockHash(){localStorage.setItem('appLockHash','')} // explicit empty string = "no lock, on purpose" (distinct from never-set, which falls back to the default PIN)
 async function tryUnlock(){
   let pin=document.getElementById('lockPinInput').value;
   let hash=await sha256Hex(pin);
@@ -642,9 +647,9 @@ function removeAppLock(){
   clearLockHash();refreshLockStatus()
 }
 function refreshLockStatus(){
-  let has=!!getLockHash();
-  let el=document.getElementById('lockStatusText');if(el)el.textContent=has?'🔒 PIN is set on this device':'Not set';
-  let btn=document.getElementById('removeLockBtn');if(btn)btn.classList.toggle('hidden',!has)
+  let el=document.getElementById('lockStatusText');
+  if(el)el.textContent=isDefaultLock()?'🔒 Using the default PIN — set your own below':getLockHash()?'🔒 Custom PIN is set on this device':'Unlocked — no PIN required';
+  let btn=document.getElementById('removeLockBtn');if(btn)btn.classList.toggle('hidden',!getLockHash())
 }
 
 let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert('On Chrome Android, use the browser menu → Add to Home screen.')}
