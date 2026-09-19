@@ -8,7 +8,14 @@ function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transactio
 function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
 function del(store,id){deleteRecord(store,id).then(refreshAndSync)}
-function refreshAndSync(){return refresh().then(()=>{if(navigator.onLine)syncNow()})}
+let syncDebounceTimer=null;
+function refreshAndSync(){
+  return refresh().then(()=>{
+    if(!navigator.onLine)return;
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer=setTimeout(()=>syncNow(),1200) // wait for a pause in edits so a burst of changes syncs once, not once-per-edit
+  })
+}
 function today(){return new Date().toISOString().slice(0,10)}
 function val(id){return document.getElementById(id).value}
 
@@ -145,6 +152,15 @@ function renderNotes(){
 }
 
 // ---------- Documents ----------
+let documentUrlCache=new Map(); // doc.id -> object URL, created once and reused (avoids leaking a new blob URL on every render)
+function getDocumentUrl(doc){
+  if(!doc.blob)return'';
+  if(!documentUrlCache.has(doc.id))documentUrlCache.set(doc.id,URL.createObjectURL(doc.blob));
+  return documentUrlCache.get(doc.id)
+}
+function revokeDocumentUrl(id){if(documentUrlCache.has(id)){URL.revokeObjectURL(documentUrlCache.get(id));documentUrlCache.delete(id)}}
+function revokeAllDocumentUrls(){for(let url of documentUrlCache.values())URL.revokeObjectURL(url);documentUrlCache.clear()}
+async function deleteDocument(id){revokeDocumentUrl(id);await deleteRecord('documents',id);refreshAndSync()}
 async function addDocument(){
   let fileInput=document.getElementById('docFile');
   let file=fileInput.files[0];
@@ -158,7 +174,7 @@ async function addDocument(){
 }
 function renderDocuments(){
   let rows=state.documents.slice().sort((a,b)=>b.id-a.id);
-  documentList.innerHTML=rows.map(x=>{let url=x.blob?URL.createObjectURL(x.blob):'';return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="del('documents',${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">No documents yet.</p>'
+  documentList.innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="deleteDocument(${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">No documents yet.</p>'
 }
 
 
@@ -365,6 +381,7 @@ async function exportData(){
 }
 async function importData(e){
   let f=e.target.files[0];if(!f)return;let data=JSON.parse(await f.text());if(!data.income||!data.expense||!data.dues)return alert('Invalid backup');
+  revokeAllDocumentUrls();
   await clearStores();
   for(let k of Object.keys(state)){
     for(let x of (data[k]||[])){
@@ -377,7 +394,7 @@ async function importData(e){
 }
 function put_raw(store,obj){return new Promise((res,rej)=>{let r=db.transaction(store,'readwrite').objectStore(store).add(obj);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
 function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r()})))}
-async function clearAll(){if(confirm('Delete all finance data from this device?')){await clearStores();refresh()}}
+async function clearAll(){if(confirm('Delete all finance data from this device?')){revokeAllDocumentUrls();await clearStores();refresh()}}
 
 let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert('On Chrome Android, use the browser menu → Add to Home screen.')}
 
@@ -457,31 +474,31 @@ function mergeRecords(localArr,remoteArr){
   return result
 }
 
-async function scriptGet(tab){
+async function scriptGetAll(){
   let url=getScriptUrl(),token=getSyncToken();
-  let res=await fetch(url+'?tab='+encodeURIComponent(tab)+'&token='+encodeURIComponent(token));
+  let res=await fetch(url+'?all=1&token='+encodeURIComponent(token));
   if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
   let data=await res.json();
   if(data.error)throw new Error('Script error: '+data.error);
-  return data.rows||[]
+  return data.tabs||{}
 }
-async function scriptPost(tab,rows){
+async function scriptPostAll(tabsData){
   let url=getScriptUrl(),token=getSyncToken();
-  // text/plain avoids a CORS preflight that Apps Script web apps don't handle
-  let res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token,tab,rows})});
+  let res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token,all:true,tabs:tabsData})});
   if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
   let data=await res.json();
   if(data.error)throw new Error('Script error: '+data.error)
 }
-
-async function syncStore(tab,storeName){
-  let remoteRows=await scriptGet(tab);
-  let remote=rowsToObjects(tab,remoteRows);
-  let merged=mergeRecords(state[storeName],remote);
-  for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
-  state[storeName]=await all(storeName);
-  await scriptPost(tab,state[storeName].map(x=>objectToRow(tab,x)))
+// One retry on transient network hiccups (mobile drops, brief Apps Script cold-start blips)
+async function withRetry(fn,label){
+  try{return await fn()}
+  catch(e){
+    updateSyncStatus(label+' failed once, retrying…');
+    await new Promise(r=>setTimeout(r,800));
+    return await fn()
+  }
 }
+const TAB_STORE_MAP={Income:'income',Expense:'expense',Dues:'dues',Advances:'advances',Notes:'notes'};
 let isSyncing=false,syncQueued=false;
 async function syncNow(){
   if(isSyncing){syncQueued=true;return} // avoid two overlapping syncs racing on the same rows — queue instead
@@ -490,11 +507,19 @@ async function syncNow(){
   try{
     if(!getScriptUrl()||!getSyncToken())throw new Error('Paste your Apps Script URL and token above first, then Save.');
     updateSyncStatus('Syncing…');
-    await syncStore('Income','income');
-    await syncStore('Expense','expense');
-    await syncStore('Dues','dues');
-    await syncStore('Advances','advances');
-    await syncStore('Notes','notes');
+    // Single round-trip down: every tab's rows in one response.
+    let remoteTabs=await withRetry(()=>scriptGetAll(),'Fetching');
+    for(let tab of Object.keys(TAB_STORE_MAP)){
+      let storeName=TAB_STORE_MAP[tab];
+      let remote=rowsToObjects(tab,remoteTabs[tab]);
+      let merged=mergeRecords(state[storeName],remote);
+      for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
+      state[storeName]=await all(storeName)
+    }
+    // Single round-trip up: every tab's rows in one request.
+    let outgoing={};
+    for(let tab of Object.keys(TAB_STORE_MAP))outgoing[tab]=state[TAB_STORE_MAP[tab]].map(x=>objectToRow(tab,x));
+    await withRetry(()=>scriptPostAll(outgoing),'Saving');
     localStorage.setItem('lastSync',new Date().toISOString());
     refresh();
     updateSyncStatus('Synced ✓ — just now')
