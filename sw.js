@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v35';
+const CACHE = 'daily-tracker-v36';
 const ASSETS = [
   './',
   './index.html',
