@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v36';
+const CACHE = 'daily-tracker-v38';
 const ASSETS = [
   './',
   './index.html',
@@ -10,7 +10,19 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE).then(async c => {
+      // Cache each file individually — one missing/failed asset (e.g. a
+      // renamed icon) must not block the whole service worker from ever
+      // installing, which is what silently kept an old worker stuck "active"
+      // and serving stale files indefinitely.
+      const results = await Promise.allSettled(ASSETS.map(url => c.add(url)));
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') console.warn('SW install: could not cache', ASSETS[i], r.reason);
+      });
+      return self.skipWaiting();
+    })
+  );
 });
 
 self.addEventListener('activate', e => {
