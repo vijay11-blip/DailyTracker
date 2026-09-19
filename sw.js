@@ -48,7 +48,7 @@ self.addEventListener('periodicsync', e => {
 
 function openDBinSW() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open('financeDB', 1);
+    const r = indexedDB.open('financeDB'); // no version pinned — always opens at whatever version the app created
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
@@ -62,15 +62,23 @@ async function checkDuesInSW() {
       tx.onsuccess = () => res(tx.result);
       tx.onerror = () => rej(tx.error);
     });
-    const todayDay = new Date().getDate();
+    const now = new Date();
+    const ym = now.toISOString().slice(0, 7);
+    const todayDay = now.getDate();
     for (const d of dues) {
-      if (d.paid || d.day > todayDay) continue;
-      await self.registration.showNotification('Due reminder: ' + d.name, {
-        body: '₹' + Number(d.amount).toLocaleString('en-IN') + ' was due on day ' + d.day + ' this month.',
-        tag: 'due-' + d.id,
-        icon: 'icon-192.png',
-        badge: 'icon-192.png'
-      });
+      const days = d.days || (d.day ? [d.day] : []); // tolerate a not-yet-migrated old-shape record
+      const paidDates = d.paidDates || [];
+      for (const day of days) {
+        const dateStr = ym + '-' + String(day).padStart(2, '0');
+        if (day <= todayDay && !paidDates.includes(dateStr)) {
+          await self.registration.showNotification('Due reminder: ' + d.name, {
+            body: '₹' + Number(d.amount).toLocaleString('en-IN') + ' was due on day ' + day + ' this month.',
+            tag: 'due-' + d.id + '-' + dateStr,
+            icon: 'icon-192.png',
+            badge: 'icon-192.png'
+          });
+        }
+      }
     }
   } catch (e) { /* IndexedDB not reachable here — ignore */ }
 }
