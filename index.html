@@ -12,13 +12,10 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Int
 .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:12px}
 .top h1{margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em}
 .top .muted{font-size:13px}
-.nav-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:40;backdrop-filter:blur(1px)}
-.nav-drawer{position:fixed;top:0;left:0;bottom:0;width:280px;max-width:82vw;background:var(--surface);z-index:41;box-shadow:4px 0 24px rgba(0,0,0,.15);display:flex;flex-direction:column;padding:10px;overflow-y:auto;transform:translateX(0);transition:transform .2s ease}
-.nav-drawer.hidden,.nav-overlay.hidden{display:none}
-.nav-drawer-header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px 14px;border-bottom:1px solid var(--border);margin-bottom:8px}
-.nav-item{display:block;width:100%;text-align:left;border:0;border-radius:10px;padding:13px 14px;background:transparent;color:var(--text);cursor:pointer;font-size:15px;font-weight:600;margin-bottom:2px;transition:background .15s}
-.nav-item:hover{background:var(--surface-2)}
-.nav-item.active{background:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(47,91,255,.35)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:22px;background:var(--surface);padding:6px;border-radius:14px;box-shadow:var(--shadow)}
+.tabs button{border:0;border-radius:10px;padding:9px 14px;background:transparent;color:var(--muted);cursor:pointer;font-size:13.5px;font-weight:600;transition:background .15s,color .15s}
+.tabs button:hover{background:var(--surface-2);color:var(--text)}
+.tabs button.active{background:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(47,91,255,.35)}
 .btn{border:0;border-radius:10px;padding:10px 14px;background:var(--brand-soft);color:var(--brand-dark);cursor:pointer;font-size:13.5px;font-weight:600;transition:filter .15s,transform .05s}
 .btn:hover{filter:brightness(0.97)}
 .btn:active{transform:scale(.98)}
@@ -77,13 +74,15 @@ canvas{max-width:100%}
   .row,.due{grid-template-columns:1fr 1fr}
   .row .actions,.due .actions{grid-column:1/-1}
   .top{align-items:flex-start;gap:10px;flex-direction:column}
-  .nav-drawer{width:100%;max-width:100%}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;justify-content:flex-start}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:0 0 auto;white-space:nowrap}
   .pill{padding:8px 12px;min-height:20px}
   .btn{min-height:38px}
   .form input,.form select,.form textarea,.search{font-size:16px} /* stops iOS Safari auto-zooming in on focus */
 }
 @media print{
-  .nav-drawer,.nav-overlay,.top button,#backupBanner,#reports .form button{display:none!important}
+  .tabs,.top button,#backupBanner,#reports .form button{display:none!important}
   body{background:#fff}
   section:not(#reports){display:none!important}
   #reports{display:block!important}
@@ -92,24 +91,11 @@ canvas{max-width:100%}
 }
 </style></head>
 <body><main class="app">
-<div class="top"><div><h1>Daily Tracker</h1><span class="muted">Offline Finance Manager</span></div><div style="display:flex;gap:8px"><button id="menuBtn" class="btn" onclick="toggleMenu()">☰ Menu</button><button class="btn" onclick="installApp()">Install App</button></div></div>
-<div id="navOverlay" class="nav-overlay hidden" onclick="closeMenu()"></div>
-<nav id="navDrawer" class="nav-drawer hidden">
-  <div class="nav-drawer-header"><b>Menu</b><button class="btn" onclick="closeMenu()">✕</button></div>
-  <button class="nav-item active" onclick="show('dash',this)">📊 Dashboard</button>
-  <button class="nav-item" onclick="show('income',this)">💰 Income</button>
-  <button class="nav-item" onclick="show('expense',this)">💸 Expenses</button>
-  <button class="nav-item" onclick="show('dues',this)">📅 Monthly Dues</button>
-  <button class="nav-item" onclick="show('cards',this)">💳 Credit Cards</button>
-  <button class="nav-item" onclick="show('advances',this)">🤝 Advances</button>
-  <button class="nav-item" onclick="show('documents',this)">📄 Documents</button>
-  <button class="nav-item" onclick="show('notes',this)">📝 Notes</button>
-  <button class="nav-item" onclick="show('reports',this)">📈 Reports</button>
-  <button class="nav-item" onclick="show('settings',this)">⚙️ Backup</button>
-</nav>
+<div class="top"><div><h1>Daily Tracker</h1><span class="muted">Offline Finance Manager</span></div><button class="btn" onclick="installApp()">Install App</button></div>
+<div class="tabs"><button class="active" onclick="show('dash',this)">📊 Dashboard</button><button onclick="show('income',this)">💰 Income</button><button onclick="show('expense',this)">💸 Expenses</button><button onclick="show('dues',this)">📅 Monthly Dues</button><button onclick="show('cards',this)">💳 Credit Cards</button><button onclick="show('advances',this)">🤝 Advances</button><button onclick="show('documents',this)">📄 Documents</button><button onclick="show('notes',this)">📝 Notes</button><button onclick="show('reports',this)">📈 Reports</button><button onclick="show('settings',this)">⚙️ Backup</button></div>
 
 <section id="dash">
-<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24;background:#fffbeb"><b style="color:#92400e">⚠ Back up your data</b><p class="muted" id="lastBackupText" style="margin:6px 0">—</p><p class="muted" style="margin:0 0 10px">This app stores everything only on this device. Clearing Chrome's "Cookies and site data" deletes it permanently — export a backup regularly.</p><button class="btn primary" onclick="show('settings',document.querySelectorAll('.nav-item')[9]);exportData()">Export Backup Now</button></div>
+<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24;background:#fffbeb"><b style="color:#92400e">⚠ Back up your data</b><p class="muted" id="lastBackupText" style="margin:6px 0">—</p><p class="muted" style="margin:0 0 10px">This app stores everything only on this device. Clearing Chrome's "Cookies and site data" deletes it permanently — export a backup regularly.</p><button class="btn primary" onclick="show('settings',document.querySelectorAll('.tabs button')[9]);exportData()">Export Backup Now</button></div>
 <div class="cards"><div class="card"><small>Total Income</small><div id="dIncome" class="amount income">₹0</div></div><div class="card"><small>Total Expense</small><div id="dExpense" class="amount expense">₹0</div></div><div class="card"><small>Balance</small><div id="dBalance" class="amount balance">₹0</div></div></div>
 <div id="dashInsights" class="insight-grid"></div>
 <div class="section"><h2>⏰ Upcoming / Pending Dues</h2><div id="dashDues" class="list"></div></div></section>
