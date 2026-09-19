@@ -164,6 +164,13 @@ function cardDueDate(x){
   let now=new Date();now.setHours(0,0,0,0);
   let y=now.getFullYear(),m=now.getMonth();
   let mostRecentBilling=now.getDate()>=billingDay?new Date(y,m,billingDay):new Date(y,m-1,billingDay);
+  // Prefer an exact "N days after billing" cycle when given — this is how
+  // most real card cycles actually work, and avoids you having to manually
+  // work out which day-of-month that lands on (e.g. billed the 14th, 20-day
+  // cycle → automatically the 4th of next month).
+  if(x.cycleDays){
+    let d=new Date(mostRecentBilling);d.setDate(d.getDate()+x.cycleDays);return d
+  }
   let dueMonthOffset=x.dueDay>=billingDay?0:1;
   return new Date(mostRecentBilling.getFullYear(),mostRecentBilling.getMonth()+dueMonthOffset,x.dueDay)
 }
@@ -187,18 +194,21 @@ function renderDues(){
 
 // ---------- Credit Cards (balance + due date + payment tracking) ----------
 let editingCardId=null;
-function resetCardForm(){document.getElementById('cardName').value='';document.getElementById('cardBalance').value='';document.getElementById('cardLimit').value='';document.getElementById('cardBillingDay').value='';document.getElementById('cardDueDay').value='';editingCardId=null;document.getElementById('cardSaveBtn').textContent='Save Card';document.getElementById('cardCancelEdit').classList.add('hidden')}
+function resetCardForm(){document.getElementById('cardName').value='';document.getElementById('cardBalance').value='';document.getElementById('cardLimit').value='';document.getElementById('cardBillingDay').value='';document.getElementById('cardCycleDays').value='';document.getElementById('cardDueDay').value='';editingCardId=null;document.getElementById('cardSaveBtn').textContent='Save Card';document.getElementById('cardCancelEdit').classList.add('hidden')}
 function cardRemaining(x){return x.balance-(x.payments||[]).reduce((a,p)=>a+p.amount,0)}
 async function addCard(){
-  let cardName=val('cardName'),balance=+val('cardBalance'),limit=val('cardLimit')?+val('cardLimit'):null,billingDay=val('cardBillingDay')?parseInt(val('cardBillingDay'),10):null,dueDay=parseInt(val('cardDueDay'),10);
-  if(!cardName||!balance||!dueDay||dueDay<1||dueDay>31)return alert('Enter card name, current outstanding and a valid due day (1-31)');
+  let cardName=val('cardName'),balance=+val('cardBalance'),limit=val('cardLimit')?+val('cardLimit'):null,billingDay=val('cardBillingDay')?parseInt(val('cardBillingDay'),10):null,cycleDays=val('cardCycleDays')?parseInt(val('cardCycleDays'),10):null,dueDayRaw=val('cardDueDay'),dueDay=dueDayRaw?parseInt(dueDayRaw,10):null;
+  if(!cardName||!balance)return alert('Enter card name and current outstanding');
+  if(!cycleDays&&!dueDay)return alert('Enter either a Due day, or a billing-cycle length in days');
+  if(dueDay!=null&&(dueDay<1||dueDay>31))return alert('Due day must be between 1 and 31');
   if(billingDay!=null&&(billingDay<1||billingDay>31))return alert('Billing day must be between 1 and 31');
+  if(cycleDays&&!billingDay)return alert('A billing-cycle length needs a Billing day to count from');
   let existing=editingCardId?state.creditcards.find(c=>c.id===editingCardId):null;
-  let obj={cardName,balance,limit,billingDay,dueDay,payments:existing?existing.payments||[]:[]};
+  let obj={cardName,balance,limit,billingDay,cycleDays,dueDay:dueDay||billingDay,payments:existing?existing.payments||[]:[]};
   if(editingCardId)obj.id=editingCardId;
   await save('creditcards',obj);resetCardForm();refreshAndSync()
 }
-function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardBillingDay').value=x.billingDay||'';document.getElementById('cardDueDay').value=x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
+function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardBillingDay').value=x.billingDay||'';document.getElementById('cardCycleDays').value=x.cycleDays||'';document.getElementById('cardDueDay').value=x.cycleDays?'':x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
 function cancelCardEdit(){resetCardForm()}
 async function deleteCard(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
@@ -237,7 +247,7 @@ function renderCards(){
       :remaining<=0&&x.balance>0
       ?`<span class="income">✓ Fully paid this cycle</span>`
       :`Outstanding: ${money(x.balance)}`;
-    let billingInfo=x.billingDay?`<span class="muted" style="min-width:120px">Billing day ${x.billingDay}</span>`:'';
+    let billingInfo=x.billingDay?`<span class="muted" style="min-width:120px">Billing day ${x.billingDay}${x.cycleDays?' + '+x.cycleDays+'d cycle':''}</span>`:'';
     return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}<span class="pill">${formatDueDate(ymd(cardDueDate(x)))}: ${cardDueLabel(x)}</span><span class="actions">${remaining>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
   }).join('')||'<p class="muted">💳 No credit cards added yet.</p>';
   let totalBalance=state.creditcards.reduce((a,x)=>a+cardRemaining(x),0);
@@ -633,7 +643,7 @@ const SHEET_TABS={
   Income:['id','date','amount','cat','note','updatedAt'],
   Expense:['id','date','amount','cat','method','note','updatedAt'],
   Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt','paymentDates'],
-  CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt','billingDay','payments'],
+  CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt','billingDay','payments','cycleDays'],
   Advances:['id','person','amount','direction','status','dueDate','note','updatedAt','settledDate','payments'],
   Notes:['id','title','content','date','updatedAt'],
   Tombstones:['id','store','recordId','deletedAt']
@@ -644,7 +654,7 @@ function rowsToObjects(tab,rows){
     if(tab==='Income')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:r[5]?+r[5]:Date.now()};
     if(tab==='Expense')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Others',method:r[4]||'',note:r[5]||'',updatedAt:r[6]?+r[6]:Date.now()};
     if(tab==='Dues')return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})()};
-    if(tab==='CreditCards')return{id:r[0]?+r[0]:undefined,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:String(r[5]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[6]||'{}')}catch(e){return{}}})(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})(),updatedAt:r[8]?+r[8]:Date.now(),billingDay:r[9]?+r[9]:null,payments:(()=>{try{return JSON.parse(r[10]||'[]')}catch(e){return[]}})()};
+    if(tab==='CreditCards')return{id:r[0]?+r[0]:undefined,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:String(r[5]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[6]||'{}')}catch(e){return{}}})(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})(),updatedAt:r[8]?+r[8]:Date.now(),billingDay:r[9]?+r[9]:null,payments:(()=>{try{return JSON.parse(r[10]||'[]')}catch(e){return[]}})(),cycleDays:r[11]?+r[11]:null};
     if(tab==='Advances')return{id:r[0]?+r[0]:undefined,person:r[1]||'',amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:r[5]||'',note:r[6]||'',updatedAt:r[7]?+r[7]:Date.now(),settledDate:r[8]||undefined,payments:(()=>{try{return JSON.parse(r[9]||'[]')}catch(e){return[]}})()};
     if(tab==='Tombstones')return{id:r[0]||'',store:r[1]||'',recordId:r[2]?+r[2]:undefined,deletedAt:r[3]?+r[3]:0};
     return{id:r[0]?+r[0]:undefined,title:r[1]||'Untitled',content:r[2]||'',date:r[3]||today(),updatedAt:r[4]?+r[4]:Date.now()}
@@ -654,7 +664,7 @@ function objectToRow(tab,x){
   if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||Date.now()];
   if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||Date.now()];
   if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now(),JSON.stringify(x.paymentDates||{})];
-  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||Date.now(),x.billingDay||'',JSON.stringify(x.payments||[])];
+  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||Date.now(),x.billingDay||'',JSON.stringify(x.payments||[]),x.cycleDays||''];
   if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||Date.now(),x.settledDate||'',JSON.stringify(x.payments||[])];
   if(tab==='Tombstones')return[x.id,x.store,x.recordId,x.deletedAt];
   return[x.id,x.title,x.content||'',x.date,x.updatedAt||Date.now()]
