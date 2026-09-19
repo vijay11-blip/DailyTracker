@@ -631,6 +631,7 @@ async function setAppLock(){
   let pin=val('newPinInput'),confirmPin=val('confirmPinInput');
   if(!pin||pin.length<4)return alert('PIN must be at least 4 characters.');
   if(pin!==confirmPin)return alert('PINs do not match.');
+  if(!confirm('Lock this app with this PIN? You will need to enter it every time you open the app on this device.'))return;
   setLockHash(await sha256Hex(pin));
   document.getElementById('newPinInput').value='';document.getElementById('confirmPinInput').value='';
   refreshLockStatus();
