@@ -1,64 +1,163 @@
-const DB='financeDB', VER=4; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],notes:[],documents:[]}, deferredPrompt=null;
+const DB='financeDB', VER=4; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],notes:[],documents:[]};
+const $=id=>document.getElementById(id);
 const money=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const pad=n=>String(n).padStart(2,'0');
-// Local-calendar date strings — never use toISOString() for a "today"/"this
-// month" key, since it always converts to UTC and silently shifts the date
-// for anyone in a timezone ahead of UTC (e.g. wrong day overnight in India,
-// or month-trend charts permanently off by one).
+const REMINDER_LEAD_DAYS=10;      // start nudging this many days before something's due
+const DUE_LOOKBACK_MONTHS=12;     // how far back unpaid dues keep showing as overdue
+const TOMBSTONE_TTL_DAYS=180;     // deletion records older than this are pruned during sync
+const FREQ_INTERVAL={monthly:1,quarterly:3,halfyearly:6,yearly:12};
+const FREQ_LABEL={monthly:'Monthly',quarterly:'Every 3 months',halfyearly:'Every 6 months',yearly:'Yearly'};
+
+// ---------- Date helpers (always local calendar, never toISOString) ----------
 function ymd(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
 function ymOf(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)}
-function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)})}
+function today(){return ymd(new Date())}
+function thisYM(){return ymOf(new Date())}
+function parseYMD(s){let[y,m,d]=String(s).split('-').map(Number);return new Date(y,(m||1)-1,d||1)}
+function daysInMonth(ym){let[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate()}
+function addMonths(ym,n){let[y,m]=ym.split('-').map(Number);return ymOf(new Date(y,m-1+n,1))}
+function monthsBetween(a,b){let[ay,am]=a.split('-').map(Number),[by,bm]=b.split('-').map(Number);return(by-ay)*12+(bm-am)}
+function maxYM(a,b){return a>b?a:b}
+// A due "day 31" means the last day in shorter months (30 Sep, 28/29 Feb) — never rolls into the next month.
+function dateForDay(ym,day){return ym+'-'+pad(Math.min(day,daysInMonth(ym)))}
+function dateInMonth(y,m,day){let dim=new Date(y,m+1,0).getDate();return new Date(y,m,Math.min(day,dim))}
+function daysFromToday(dateStr){let t=new Date();t.setHours(0,0,0,0);return Math.round((parseYMD(dateStr)-t)/86400000)}
+// Google Sheets can turn "2026-10-01" into a real date and hand it back as a UTC
+// timestamp ("2026-09-30T18:30:00.000Z") — convert that back to the local date.
+function normDate(v){
+  if(v==null||v==='')return'';
+  let s=String(v);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+  let d=new Date(s);return isNaN(d)?s.slice(0,10):ymd(d)
+}
+function normYM(v){if(!v)return'';let s=String(v);if(/^\d{4}-\d{2}$/.test(s))return s;return normDate(s).slice(0,7)}
+function formatDueDate(dateStr){let d=parseYMD(dateStr);return isNaN(d)?esc(dateStr):d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
+function safeDisplayDate(v){if(!v)return'';let d=normDate(v);return /^\d{4}-\d{2}-\d{2}$/.test(d)?formatDueDate(d):esc(String(v))}
+function remainingLabelFromDays(diff){
+  if(diff>0)return `⏳ Due in ${diff} day${diff===1?'':'s'}`;
+  if(diff===0)return'⏰ Due today';
+  return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
+}
+function parseAmount(s){let n=parseFloat(s);return isFinite(n)&&n>0?Math.round(n*100)/100:0}
+function uid(){return crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)}
+function val(id){return $(id).value}
+const sum=(arr,f=x=>x.amount)=>arr.reduce((a,x)=>a+(+f(x)||0),0);
+
+// ---------- Settings/plan data (budgets, recurring, accounts, categories) ----------
+const DEFAULT_META={
+  incomeCats:['Salary','Business','Freelance','Investment','Rental','Service Charge','Gift','Interest','Other'],
+  expenseCats:['Tea Shop','Petrol','Food','Grocery','Home','Bills','Others'],
+  budgets:{},recurring:[],accounts:[],updatedAt:0
+};
+function freshMeta(){return JSON.parse(JSON.stringify(DEFAULT_META))}
+function mergeMeta(m){let out=freshMeta();if(m&&typeof m==='object')for(let k of Object.keys(out))if(m[k]!==undefined)out[k]=m[k];return out}
+function loadMeta(){try{return mergeMeta(JSON.parse(localStorage.getItem('dtMeta')||'null'))}catch(e){return freshMeta()}}
+let meta=loadMeta();
+function saveMeta(touch=true){if(touch)meta.updatedAt=Date.now();try{localStorage.setItem('dtMeta',JSON.stringify(meta))}catch(e){}}
+function metaChanged(){saveMeta();render();renderPlan(false);scheduleSync()}
+
+// ---------- Toast + modal ----------
+let toastTimer=null;
+function toast(msg,{undo=null,action=null,actionText='Undo',type='',ms=6000}={}){
+  let el=$('toast');clearTimeout(toastTimer);
+  el.className='toast'+(type?' '+type:'');
+  el.innerHTML=`<span>${esc(msg)}</span>`;
+  let fn=undo||action;
+  if(fn){let b=document.createElement('button');b.textContent=undo?'Undo':actionText;b.onclick=()=>{hideToast();fn()};el.appendChild(b)}
+  el.hidden=false;
+  if(ms)toastTimer=setTimeout(hideToast,ms)
+}
+function hideToast(){$('toast').hidden=true}
+function modal({title='',message='',fields=[],okText='OK',cancelText='Cancel',danger=false}={}){
+  return new Promise(resolve=>{
+    let dlg=$('modal');
+    if(!dlg||typeof dlg.showModal!=='function'){ // very old browser fallback
+      if(!fields.length)return resolve(confirm((title?title+'\n\n':'')+message)?{}:null);
+      let out={};
+      for(let f of fields){if(f.type==='select'){out[f.name]=f.value??(f.options[0]?.value??'');continue}let v=prompt(f.label,f.value??'');if(v===null)return resolve(null);out[f.name]=v}
+      return resolve(out)
+    }
+    dlg.innerHTML=`<form>${title?`<h3>${esc(title)}</h3>`:''}${message?`<p class="muted" style="margin:0">${esc(message)}</p>`:''}${fields.map(f=>`<label>${esc(f.label||'')}${f.type==='select'
+      ?`<select name="${esc(f.name)}">${f.options.map(o=>`<option value="${esc(o.value)}"${String(o.value)===String(f.value??'')?' selected':''}>${esc(o.label)}</option>`).join('')}</select>`
+      :`<input name="${esc(f.name)}" type="${f.type||'text'}" value="${esc(f.value??'')}"${f.inputmode?` inputmode="${f.inputmode}"`:''}${f.step?` step="${f.step}"`:''}${f.min!=null?` min="${f.min}"`:''} autocomplete="off">`}</label>`).join('')}<div class="btns"><button type="button" class="btn" data-cancel>${esc(cancelText)}</button><button type="submit" class="btn ${danger?'danger':'primary'}">${esc(okText)}</button></div></form>`;
+    let done=false;const finish=v=>{if(done)return;done=true;if(dlg.open)dlg.close();resolve(v)};
+    let form=dlg.querySelector('form');
+    form.onsubmit=e=>{e.preventDefault();let out={};for(let f of fields)out[f.name]=form.elements[f.name].value;finish(out)};
+    dlg.querySelector('[data-cancel]').onclick=()=>finish(null);
+    dlg.oncancel=e=>{e.preventDefault();finish(null)};
+    dlg.onclose=()=>finish(null);
+    dlg.showModal();
+    let first=form.querySelector('input,select');if(first)setTimeout(()=>first.focus(),30)
+  })
+}
+async function confirmModal(message,okText='OK',danger=false){return!!(await modal({title:'Please confirm',message,okText,danger}))}
+function accountOptions(){return[{value:'',label:'— No account —'},...meta.accounts.map(a=>({value:a.id,label:a.name}))]}
+
+// ---------- IndexedDB ----------
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;db.onversionchange=()=>{db.close();location.reload()};res()};r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-function save(store,obj){obj.updatedAt=Date.now();return putExact(store,obj)}
+function save(store,obj){obj.updatedAt=Date.now();if(!obj.createdAt)obj.createdAt=obj.updatedAt;return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
-// Stores that go through Google Sheets sync. Deleting a record here must be
-// remembered as a tombstone — otherwise the very next sync sees the item
-// still sitting in the Sheet, has no way to know it was deleted on purpose,
-// and quietly restores it (the "deleted item comes back" bug).
+// Deletions in synced stores are remembered as tombstones so the next sync
+// doesn't quietly restore them from the Sheet.
 const SYNCED_STORES=new Set(['income','expense','dues','creditcards','advances','notes']);
 function addTombstone(storeName,recordId){
   if(!SYNCED_STORES.has(storeName)||recordId==null)return Promise.resolve();
   let obj={id:storeName+':'+recordId,store:storeName,recordId,deletedAt:Date.now()};
   return new Promise(res=>{let r=db.transaction('tombstones','readwrite').objectStore('tombstones').put(obj);r.onsuccess=()=>res();r.onerror=()=>res()})
 }
+function removeTombstone(storeName,recordId){return deleteRecord('tombstones',storeName+':'+recordId)}
 async function deleteWithTombstone(storeName,id){await addTombstone(storeName,id);await deleteRecord(storeName,id)}
-function del(store,id){deleteWithTombstone(store,id).then(refreshAndSync)}
-let syncDebounceTimer=null;
-function refreshAndSync(){
-  return refresh().then(()=>{
-    if(!navigator.onLine)return;
-    clearTimeout(syncDebounceTimer);
-    syncDebounceTimer=setTimeout(()=>syncNow(),1200) // wait for a pause in edits so a burst of changes syncs once, not once-per-edit
-  })
+// Delete with an Undo toast instead of a blocking confirm().
+async function del(store,id,label='Item'){
+  let rec=(state[store]||[]).find(r=>r.id===id);if(!rec)return;
+  if(store==='documents'){revokeDocumentUrl(id);await deleteRecord(store,id)}else await deleteWithTombstone(store,id);
+  await refreshAndSync();
+  toast(label+' deleted',{undo:async()=>{
+    await removeTombstone(store,id);
+    await save(store,{...rec}); // newer updatedAt than the tombstone, so sync keeps it
+    refreshAndSync()
+  }})
 }
-function today(){return ymd(new Date())}
-function val(id){return document.getElementById(id).value}
+let syncDebounceTimer=null;
+function scheduleSync(){
+  if(!navigator.onLine)return;
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer=setTimeout(()=>syncNow(),1200) // a burst of edits syncs once
+}
+function refreshAndSync(){return refresh().then(scheduleSync)}
 
+// ---------- Migrations of older record shapes ----------
 async function normalizeDues(){
-  let anyChanged=false;
+  let anyChanged=false,ym=thisYM();
   for(let x of state.dues){
-    let itemChanged=false;
+    let changed=false;
     if(!Array.isArray(x.days)){
       x.days=x.day?[x.day]:[];
-      x.paidDates=x.paidDates||(x.paid&&x.day?[today().slice(0,7)+'-'+pad(x.day)]:[]);
-      delete x.day;delete x.paid;
-      itemChanged=true
+      x.paidDates=x.paidDates||(x.paid&&x.day?[ym+'-'+pad(x.day)]:[]);
+      delete x.day;delete x.paid;changed=true
     }
-    if(!x.linkedExpenses){x.linkedExpenses={};itemChanged=true}
-    if(!x.paymentDates){x.paymentDates={};itemChanged=true}
-    if(itemChanged){await save('dues',x);anyChanged=true}
+    if(!x.paidDates){x.paidDates=[];changed=true}
+    if(!x.linkedExpenses){x.linkedExpenses={};changed=true}
+    if(!x.paymentDates){x.paymentDates={};changed=true}
+    if(!x.frequency){x.frequency='monthly';changed=true}
+    if(!x.startYM){
+      // Older dues had no start month. If you've been marking months paid,
+      // start from last month so an unpaid last-month bill shows as overdue;
+      // otherwise start fresh this month (no surprise "overdue" pile-up).
+      x.startYM=x.paidDates.some(p=>String(p).slice(0,7)<ym)?addMonths(ym,-1):ym;changed=true
+    }
+    if(changed){await save('dues',x);anyChanged=true}
   }
   if(anyChanged)state.dues=await all('dues')
 }
-
 async function normalizeAdvances(){
   let anyChanged=false;
   for(let x of state.advances){
     if(!Array.isArray(x.payments)){
-      // an existing "Settled" advance from before payment tracking is assumed fully repaid
-      x.payments=x.status==='settled'?[{date:x.settledDate||today(),amount:x.amount}]:[];
+      x.payments=x.status==='settled'?[{date:x.settledDate||today(),amount:x.amount,auto:true}]:[];
       await save('advances',x);anyChanged=true
     }
   }
@@ -67,701 +166,981 @@ async function normalizeAdvances(){
 async function normalizeCards(){
   let anyChanged=false;
   for(let x of state.creditcards){
+    let changed=false;
     if(!Array.isArray(x.payments)){
-      // an old card marked "paid" under the previous system is treated as
-      // fully paid for the balance it had then; otherwise it starts fresh
       let wasPaid=(x.paidDates||[]).length>0;
       x.payments=wasPaid?[{date:today(),amount:x.balance}]:[];
       if(x.billingDay===undefined)x.billingDay=null;
-      await save('creditcards',x);anyChanged=true
+      changed=true
     }
+    // Card-linked spending counts from the statement date onwards.
+    if(!x.statementDate){x.statementDate=today();x.statementAt=Date.now();changed=true}
+    if(changed){await save('creditcards',x);anyChanged=true}
   }
   if(anyChanged)state.creditcards=await all('creditcards')
 }
-async function refresh(){for(let k of Object.keys(state))state[k]=await all(k);await normalizeDues();await normalizeAdvances();await normalizeCards();render();if('Notification'in window&&Notification.permission==='granted')checkDueNotifications()}
+let refreshing=null;
+async function refresh(){
+  // Serialize overlapping refreshes (sync + edits) so they don't interleave writes.
+  while(refreshing)await refreshing;
+  refreshing=(async()=>{
+    for(let k of Object.keys(state))state[k]=await all(k);
+    await normalizeDues();await normalizeAdvances();await normalizeCards();
+    render();
+    if('Notification'in window&&Notification.permission==='granted')checkDueNotifications()
+  })();
+  try{await refreshing}finally{refreshing=null}
+}
+
+// ---------- Category / account selects ----------
+function fillSelect(sel,opts,placeholder){
+  if(!sel)return;
+  let cur=sel.value;
+  let norm=opts.map(o=>typeof o==='string'?{value:o,label:o}:o);
+  if(placeholder!=null)norm.unshift({value:'',label:placeholder});
+  // Keep a value that's no longer in the list (e.g. an old category on a record being edited)
+  if(cur&&!norm.some(o=>o.value===cur))norm.push({value:cur,label:cur});
+  sel.innerHTML=norm.map(o=>`<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  if(norm.some(o=>o.value===cur))sel.value=cur
+}
+function setSelectValue(sel,v,label){
+  v=v==null?'':String(v);
+  if(![...sel.options].some(o=>o.value===v)){let o=document.createElement('option');o.value=v;o.textContent=label||v||'—';sel.appendChild(o)}
+  sel.value=v
+}
+function accountName(id){if(!id)return'';let a=meta.accounts.find(a=>a.id===id);return a?a.name:'(removed account)'}
+function cardName(id){let c=state.creditcards.find(c=>c.id===id);return c?c.cardName:'(removed card)'}
+function populateSelects(){
+  fillSelect($('iCat'),meta.incomeCats);
+  fillSelect($('eCat'),meta.expenseCats);
+  let accs=meta.accounts.map(a=>({value:a.id,label:a.name}));
+  fillSelect($('iAccount'),accs,'— No account —');
+  fillSelect($('eAccount'),accs,'— No account —');
+  fillSelect($('rAccount'),accs,'— No account —');
+  $('iAccount').classList.toggle('hidden',!meta.accounts.length&&!$('iAccount').value);
+  let cards=state.creditcards.map(c=>({value:String(c.id),label:c.cardName}));
+  fillSelect($('eCard'),cards,cards.length?'— Which card? —':'No cards added');
+  let incCats=[...new Set([...meta.incomeCats,...state.income.map(x=>x.cat||x.source).filter(Boolean)])];
+  let expCats=[...new Set([...meta.expenseCats,...state.expense.map(x=>x.cat).filter(Boolean)])];
+  fillSelect($('iFCat'),incCats,'All categories');
+  fillSelect($('eFCat'),expCats,'All categories');
+  fillSelect($('rCat'),val('rType')==='income'?meta.incomeCats:meta.expenseCats);
+  onMethodChange()
+}
+function onMethodChange(){
+  let isCard=val('eMethod')==='Card';
+  $('eCard').classList.toggle('hidden',!isCard);
+  $('eAccount').classList.toggle('hidden',isCard||(!meta.accounts.length&&!$('eAccount').value))
+}
+function onRecurTypeChange(){
+  fillSelect($('rCat'),val('rType')==='income'?meta.incomeCats:meta.expenseCats);
+  $('rMethod').classList.toggle('hidden',val('rType')==='income')
+}
+
+// ---------- List filters ----------
+function filterRows(rows,p,fields,catOf){
+  let q=(val(p+'Search')||'').toLowerCase().trim(),cat=val(p+'FCat'),from=val(p+'From'),to=val(p+'To');
+  let min=parseFloat(val(p+'Min')),max=parseFloat(val(p+'Max'));
+  return rows.filter(x=>
+    (!q||fields(x).some(v=>String(v||'').toLowerCase().includes(q)))&&
+    (!cat||catOf(x)===cat)&&(!from||x.date>=from)&&(!to||x.date<=to)&&
+    (isNaN(min)||x.amount>=min)&&(isNaN(max)||x.amount<=max)
+  ).sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0))
+}
+function filtersActive(p){return['Search','FCat','From','To','Min','Max'].some(k=>val(p+k))}
+function clearFilters(p){['Search','FCat','From','To','Min','Max'].forEach(k=>$(p+k).value='');p==='i'?renderIncomeList():renderExpenseList()}
 
 // ---------- Income ----------
 let editingIncomeId=null;
-function resetIncomeForm(){document.getElementById('iAmount').value='';document.getElementById('iCat').value='Salary';document.getElementById('iNote').value='';document.getElementById('iDate').value=today();editingIncomeId=null;document.getElementById('iSaveBtn').textContent='Save Income';document.getElementById('iCancelEdit').classList.add('hidden')}
-async function addIncome(){let amount=+val('iAmount');if(!amount)return alert('Enter amount');let obj={date:val('iDate')||today(),amount,cat:val('iCat'),note:val('iNote')};if(editingIncomeId)obj.id=editingIncomeId;await save('income',obj);resetIncomeForm();refreshAndSync()}
-function editIncome(id){let x=state.income.find(r=>r.id===id);if(!x)return;editingIncomeId=id;document.getElementById('iDate').value=x.date;document.getElementById('iAmount').value=x.amount;document.getElementById('iCat').value=x.cat||x.source||'Other';document.getElementById('iNote').value=x.note||'';document.getElementById('iSaveBtn').textContent='Update Income';document.getElementById('iCancelEdit').classList.remove('hidden');show('income',document.querySelectorAll('.tabs button')[1]);window.scrollTo(0,0)}
-function cancelIncomeEdit(){resetIncomeForm()}
+function resetIncomeForm(){$('iAmount').value='';$('iCat').value=meta.incomeCats[0]||'';$('iNote').value='';$('iDate').value=today();$('iAccount').value='';editingIncomeId=null;$('iSaveBtn').textContent='Save Income';$('iCancelEdit').classList.add('hidden')}
+async function addIncome(){
+  let amount=parseAmount(val('iAmount'));if(!amount)return alert('Enter an amount greater than 0');
+  let existing=editingIncomeId?state.income.find(r=>r.id===editingIncomeId):null;
+  let obj={...(existing||{}),date:val('iDate')||today(),amount,cat:val('iCat'),note:val('iNote').trim(),account:val('iAccount')};
+  delete obj.source;
+  await save('income',obj);resetIncomeForm();refreshAndSync();
+  toast(existing?'Income updated':'Income saved')
+}
+function editIncome(id){
+  let x=state.income.find(r=>r.id===id);if(!x)return;editingIncomeId=id;
+  $('iDate').value=x.date;$('iAmount').value=x.amount;setSelectValue($('iCat'),x.cat||x.source||'Other');
+  $('iAccount').classList.remove('hidden');setSelectValue($('iAccount'),x.account||'',accountName(x.account));$('iNote').value=x.note||'';
+  $('iSaveBtn').textContent='Update Income';$('iCancelEdit').classList.remove('hidden');show('income');window.scrollTo(0,0)
+}
 function renderIncomeList(){
-  let q=(document.getElementById('iSearch')?.value||'').toLowerCase();
-  let rows=state.income.filter(x=>!q||[x.date,x.cat||x.source,x.note].some(v=>String(v||'').toLowerCase().includes(q))).slice().sort((a,b)=>b.date.localeCompare(a.date));
-  incomeList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">💰 No income records yet — add your first one above.</p>'
+  let rows=filterRows(state.income,'i',x=>[x.date,x.cat||x.source,x.note,accountName(x.account)],x=>x.cat||x.source);
+  $('iTotal').textContent=rows.length?`${rows.length} record${rows.length===1?'':'s'} · Total ${money(sum(rows))}${filtersActive('i')?' (filtered)':''}`:'';
+  $('incomeList').innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}${x.account?` <span class="muted">· ${esc(accountName(x.account))}</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id},'Income')">Delete</button></span></div>`).join('')
+    ||`<p class="muted">${filtersActive('i')?'No income matches these filters.':'💰 No income records yet — add your first one above.'}</p>`
 }
 
 // ---------- Expense ----------
 let editingExpenseId=null;
-function resetExpenseForm(){document.getElementById('eAmount').value='';document.getElementById('eCat').value='Food';document.getElementById('eMethod').value='Cash';document.getElementById('eNote').value='';document.getElementById('eDate').value=today();editingExpenseId=null;document.getElementById('eSaveBtn').textContent='Save Expense';document.getElementById('eCancelEdit').classList.add('hidden')}
-async function addExpense(){let amount=+val('eAmount');if(!amount)return alert('Enter amount');let obj={date:val('eDate')||today(),amount,cat:val('eCat'),method:val('eMethod'),note:val('eNote')};if(editingExpenseId)obj.id=editingExpenseId;await save('expense',obj);resetExpenseForm();refreshAndSync()}
-function editExpense(id){let x=state.expense.find(r=>r.id===id);if(!x)return;editingExpenseId=id;document.getElementById('eDate').value=x.date;document.getElementById('eAmount').value=x.amount;document.getElementById('eCat').value=x.cat||'Others';document.getElementById('eMethod').value=x.method||'Cash';document.getElementById('eNote').value=x.note||'';document.getElementById('eSaveBtn').textContent='Update Expense';document.getElementById('eCancelEdit').classList.remove('hidden');show('expense',document.querySelectorAll('.tabs button')[2]);window.scrollTo(0,0)}
-function cancelExpenseEdit(){resetExpenseForm()}
+function resetExpenseForm(){$('eAmount').value='';$('eCat').value=meta.expenseCats.includes('Food')?'Food':(meta.expenseCats[0]||'');$('eMethod').value='Cash';$('eCard').value='';$('eAccount').value='';$('eNote').value='';$('eDate').value=today();editingExpenseId=null;$('eSaveBtn').textContent='Save Expense';$('eCancelEdit').classList.add('hidden');onMethodChange()}
+async function addExpense(){
+  let amount=parseAmount(val('eAmount'));if(!amount)return alert('Enter an amount greater than 0');
+  let method=val('eMethod'),cardId=method==='Card'?(+val('eCard')||null):null;
+  if(method==='Card'&&state.creditcards.length&&!cardId)return alert('Pick which card this was paid with (or choose another payment method).');
+  let existing=editingExpenseId?state.expense.find(r=>r.id===editingExpenseId):null;
+  let obj={...(existing||{}),date:val('eDate')||today(),amount,cat:val('eCat'),method,note:val('eNote').trim(),account:method==='Card'?'':val('eAccount'),cardId};
+  await save('expense',obj);resetExpenseForm();await refreshAndSync();
+  if(!existing||existing.cat!==obj.cat||existing.amount!==obj.amount||existing.date!==obj.date)checkBudget(obj.cat,obj.date);
+  else toast('Expense updated')
+}
+function editExpense(id){
+  let x=state.expense.find(r=>r.id===id);if(!x)return;editingExpenseId=id;
+  $('eDate').value=x.date;$('eAmount').value=x.amount;setSelectValue($('eCat'),x.cat||'Others');
+  setSelectValue($('eMethod'),x.method||'Cash');
+  if(x.cardId)setSelectValue($('eCard'),String(x.cardId),cardName(x.cardId));else $('eCard').value='';
+  $('eAccount').classList.remove('hidden');setSelectValue($('eAccount'),x.account||'',accountName(x.account));
+  $('eNote').value=x.note||'';onMethodChange();
+  $('eSaveBtn').textContent='Update Expense';$('eCancelEdit').classList.remove('hidden');show('expense');window.scrollTo(0,0)
+}
+async function deleteExpense(id){
+  // If this expense was auto-logged by a due, deleting it must also un-mark that due.
+  let due=state.dues.find(d=>Object.values(d.linkedExpenses||{}).map(Number).includes(id));
+  if(due){
+    if(!await confirmModal(`This expense was logged automatically when "${due.name}" was marked paid. Deleting it will mark that due as unpaid again.`,'Delete',true))return;
+    let key=Object.keys(due.linkedExpenses).find(k=>+due.linkedExpenses[k]===id);
+    due.paidDates=(due.paidDates||[]).filter(p=>p!==key);
+    delete due.paymentDates[key];delete due.linkedExpenses[key];
+    await save('dues',due);await deleteWithTombstone('expense',id);refreshAndSync();
+    return toast('Expense deleted — "'+due.name+'" is unpaid again')
+  }
+  del('expense',id,'Expense')
+}
 function renderExpenseList(){
-  let q=(document.getElementById('eSearch')?.value||'').toLowerCase();
-  let rows=state.expense.filter(x=>!q||[x.date,x.cat,x.method,x.note].some(v=>String(v||'').toLowerCase().includes(q))).slice().sort((a,b)=>b.date.localeCompare(a.date));
-  expenseList.innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${x.method?'('+esc(x.method)+')':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="del('expense',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">💸 No expense records yet — add your first one above.</p>'
+  let rows=filterRows(state.expense,'e',x=>[x.date,x.cat,x.method,x.note,accountName(x.account),x.cardId?cardName(x.cardId):''],x=>x.cat);
+  $('eTotal').textContent=rows.length?`${rows.length} record${rows.length===1?'':'s'} · Total ${money(sum(rows))}${filtersActive('e')?' (filtered)':''}`:'';
+  $('expenseList').innerHTML=rows.map(x=>{
+    let via=x.cardId?cardName(x.cardId):x.account?accountName(x.account):'';
+    let meth=[x.method,via].filter(Boolean).join(' · ');
+    return `<div class="row"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${meth?`<span class="muted">(${esc(meth)})</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="deleteExpense(${x.id})">Delete</button></span></div>`
+  }).join('')||`<p class="muted">${filtersActive('e')?'No expenses match these filters.':'💸 No expense records yet — add your first one above.'}</p>`
 }
 
-// ---------- Dues (multiple due days per bill) ----------
-let editingDueId=null;
-function parseDays(str){return [...new Set(String(str).split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n>=1&&n<=31))].sort((a,b)=>a-b)}
-function resetDueForm(){document.getElementById('dueName').value='';document.getElementById('dueAmount').value='';document.getElementById('dueDay').value='';editingDueId=null;document.getElementById('dueSaveBtn').textContent='Save Due';document.getElementById('dueCancelEdit').classList.add('hidden')}
-async function addDue(){
-  let name=val('dueName'),amount=+val('dueAmount'),days=parseDays(val('dueDay'));
-  if(!name||!amount||!days.length)return alert('Enter due name, amount and at least one valid due day (1-31, comma-separated for more than one)');
-  let existing=editingDueId?state.dues.find(d=>d.id===editingDueId):null;
-  let obj={name,amount,days,paidDates:existing?existing.paidDates||[]:[]};
-  if(editingDueId)obj.id=editingDueId;
-  await save('dues',obj);resetDueForm();refreshAndSync()
+// ---------- Budgets ----------
+function monthSpend(cat,ym){return sum(state.expense.filter(x=>x.cat===cat&&x.date.startsWith(ym)))}
+async function checkBudget(cat,date){
+  let limit=+meta.budgets[cat]||0,ym=thisYM();
+  if(!limit||!String(date).startsWith(ym)){toast('Expense saved');return}
+  let spent=monthSpend(cat,ym),pct=spent/limit*100;
+  let msg=null;
+  if(pct>=100)msg=`Over budget: ${cat} is at ${money(spent)} of ${money(limit)} this month`;
+  else if(pct>=80)msg=`Heads up: ${cat} has used ${Math.round(pct)}% of its ${money(limit)} budget`;
+  if(!msg){toast('Expense saved');return}
+  toast(msg,{type:'warn',ms:8000});
+  if('Notification'in window&&Notification.permission==='granted'&&'serviceWorker'in navigator){
+    let key='budget-'+cat+'-'+ym+'-'+(pct>=100?'100':'80');
+    let notified=loadNotified();
+    if(!notified[key]){
+      notified[key]=today();saveNotified(notified);
+      try{(await navigator.serviceWorker.ready).showNotification('Budget alert: '+cat,{body:msg,tag:key,icon:'icon-192.png',badge:'icon-192.png'})}catch(e){}
+    }
+  }
 }
-function editDue(id){let x=state.dues.find(r=>r.id===id);if(!x)return;editingDueId=id;document.getElementById('dueName').value=x.name;document.getElementById('dueAmount').value=x.amount;document.getElementById('dueDay').value=(x.days||[]).join(', ');document.getElementById('dueSaveBtn').textContent='Update Due';document.getElementById('dueCancelEdit').classList.remove('hidden');show('dues',document.querySelectorAll('.tabs button')[3]);window.scrollTo(0,0)}
-function cancelDueEdit(){resetDueForm()}
+function renderDashBudgets(){
+  let entries=Object.entries(meta.budgets).filter(([,v])=>+v>0);
+  $('dashBudgetsWrap').classList.toggle('hidden',!entries.length);
+  let ym=thisYM();
+  $('dashBudgets').innerHTML=entries.map(([cat,limit])=>{
+    let spent=monthSpend(cat,ym),pct=spent/limit*100,cls=pct>=100?'over':pct>=80?'warn':'';
+    return `<div class="budget-row"><b>${esc(cat)}</b><div class="bar ${cls}"><i style="width:${Math.min(pct,100).toFixed(1)}%"></i></div><span class="${pct>=100?'expense':'muted'}" style="text-align:right">${money(spent)} / ${money(limit)}</span></div>`
+  }).join('')
+}
+function renderBudgetForm(){
+  $('budgetForm').innerHTML=meta.expenseCats.map((c,i)=>`<div class="budget-edit"><span>${esc(c)}</span><input class="inp" type="number" min="0" step="1" data-budget-idx="${i}" placeholder="No limit" value="${esc(meta.budgets[c]||'')}"></div>`).join('')||'<p class="muted">Add an expense category first.</p>'
+}
+function saveBudgets(){
+  let b={};
+  document.querySelectorAll('[data-budget-idx]').forEach(inp=>{let cat=meta.expenseCats[+inp.dataset.budgetIdx];let v=parseAmount(inp.value);if(cat&&v)b[cat]=v});
+  meta.budgets=b;metaChanged();toast('Budgets saved')
+}
+
+// ---------- Dues (monthly / quarterly / half-yearly / yearly) ----------
+let editingDueId=null;
+function parseDays(str){return[...new Set(String(str).split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n>=1&&n<=31))].sort((a,b)=>a-b)}
+function resetDueForm(){$('dueName').value='';$('dueAmount').value='';$('dueDay').value='';$('dueFreq').value='monthly';$('dueStart').value=thisYM();editingDueId=null;$('dueSaveBtn').textContent='Save Due';$('dueCancelEdit').classList.add('hidden')}
+async function addDue(){
+  let name=val('dueName').trim(),amount=parseAmount(val('dueAmount')),days=parseDays(val('dueDay'));
+  if(!name||!amount||!days.length)return alert('Enter due name, an amount greater than 0 and at least one valid due day (1-31, comma-separated for more than one)');
+  let existing=editingDueId?state.dues.find(d=>d.id===editingDueId):null;
+  // keep payment history + links on edit (previously lost, which orphaned auto-logged expenses)
+  let obj={...(existing||{}),name,amount,days,frequency:val('dueFreq')||'monthly',startYM:val('dueStart')||thisYM(),
+    paidDates:existing?.paidDates||[],linkedExpenses:existing?.linkedExpenses||{},paymentDates:existing?.paymentDates||{}};
+  await save('dues',obj);resetDueForm();refreshAndSync();toast(existing?'Due updated':'Due saved')
+}
+function editDue(id){
+  let x=state.dues.find(r=>r.id===id);if(!x)return;editingDueId=id;
+  $('dueName').value=x.name;$('dueAmount').value=x.amount;$('dueDay').value=(x.days||[]).join(', ');$('dueFreq').value=x.frequency||'monthly';$('dueStart').value=x.startYM||thisYM();
+  $('dueSaveBtn').textContent='Update Due';$('dueCancelEdit').classList.remove('hidden');show('dues');window.scrollTo(0,0)
+}
 async function deleteDue(id){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
-  if(!confirm('Delete "'+x.name+'"? This also removes any expenses it auto-logged when marked paid.'))return;
-  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',expId);
-  await deleteWithTombstone('dues',id);refreshAndSync()
+  if(!await confirmModal('Delete "'+x.name+'"? This also removes any expenses it auto-logged when marked paid.','Delete',true))return;
+  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',+expId);
+  await deleteWithTombstone('dues',id);refreshAndSync();toast('Due deleted')
 }
-async function toggleDueDay(id,dateStr){
+function dueOccursIn(x,ym){let diff=monthsBetween(x.startYM||ym,ym);return diff>=0&&diff%(FREQ_INTERVAL[x.frequency]||1)===0}
+// the key actually stored for a paid occurrence (new clamped key, or an old unclamped "…-31" key)
+function paidKey(x,ym,day){let p=x.paidDates||[];let k=dateForDay(ym,day);if(p.includes(k))return k;let legacy=ym+'-'+pad(day);return p.includes(legacy)?legacy:null}
+function dueOccurrences(x,fromYM,toYM){
+  let out=[];
+  for(let ym=fromYM,guard=0;monthsBetween(ym,toYM)>=0&&guard<60;ym=addMonths(ym,1),guard++){
+    if(!dueOccursIn(x,ym))continue;
+    for(let day of (x.days||[])){let key=paidKey(x,ym,day);out.push({due:x,ym,day,dateStr:dateForDay(ym,day),paid:!!key,key})}
+  }
+  return out
+}
+function dueFloorYM(x){return maxYM(addMonths(thisYM(),-DUE_LOOKBACK_MONTHS),x.startYM||thisYM())}
+// Unpaid occurrences: anything overdue (carried over from earlier months), everything
+// this month, plus next month's early ones that fall inside the reminder window.
+function pendingDueOccurrences(){
+  let now=new Date(),ym=thisYM();
+  let toYM=ymOf(new Date(now.getFullYear(),now.getMonth(),now.getDate()+REMINDER_LEAD_DAYS));
+  let out=[];
+  for(let x of state.dues){
+    let from=dueFloorYM(x);if(from>toYM)continue;
+    for(let o of dueOccurrences(x,from,toYM))if(!o.paid&&(o.ym<=ym||daysFromToday(o.dateStr)<=REMINDER_LEAD_DAYS))out.push(o)
+  }
+  return out.sort((a,b)=>a.dateStr.localeCompare(b.dateStr))
+}
+function nextDueOccurrence(x){
+  let ym=thisYM();
+  for(let i=1;i<=24;i++){let m=addMonths(ym,i);if(dueOccursIn(x,m)&&m>=(x.startYM||m))return{dateStr:dateForDay(m,(x.days||[])[0]||1)}}
+  return null
+}
+async function toggleDue(id,ym,day){
   let x=state.dues.find(d=>d.id===id);if(!x)return;
   x.paidDates=x.paidDates||[];x.linkedExpenses=x.linkedExpenses||{};x.paymentDates=x.paymentDates||{};
-  let i=x.paidDates.indexOf(dateStr);
-  if(i>=0){
-    // marking pending again — remove the auto-added expense, if any
-    x.paidDates.splice(i,1);
-    delete x.paymentDates[dateStr];
-    let expId=x.linkedExpenses[dateStr];
-    if(expId){await deleteWithTombstone('expense',expId);delete x.linkedExpenses[dateStr]}
+  let key=paidKey(x,ym,day);
+  if(key){
+    x.paidDates=x.paidDates.filter(p=>p!==key);delete x.paymentDates[key];
+    let expId=x.linkedExpenses[key];
+    if(expId){await deleteWithTombstone('expense',+expId);delete x.linkedExpenses[key]}
+    await save('dues',x);await refreshAndSync();
+    toast(`${x.name} (${formatDueDate(dateForDay(ym,day))}) marked unpaid`,{undo:()=>toggleDue(id,ym,day)})
   }else{
-    // marking paid — record today as the actual payment date, and auto-log a matching expense
-    x.paidDates.push(dateStr);
-    x.paymentDates[dateStr]=today();
-    let expId=await save('expense',{date:dateStr,amount:x.amount,cat:'Bills',method:'',note:x.name+' (auto)'});
-    x.linkedExpenses[dateStr]=expId
+    key=dateForDay(ym,day);
+    x.paidDates.push(key);x.paymentDates[key]=today();
+    // the expense is dated on the day you actually paid, not the bill's due date
+    let expId=await save('expense',{date:today(),amount:x.amount,cat:'Bills',method:'',note:x.name+' (auto)'});
+    x.linkedExpenses[key]=expId;
+    await save('dues',x);await refreshAndSync();
+    toast(`${x.name} marked paid · expense logged`,{undo:()=>toggleDue(id,ym,day)})
   }
-  await save('dues',x);refreshAndSync()
 }
-function formatDueDate(dateStr){let d=new Date(dateStr+'T00:00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
-function dueRemainingLabel(day){
-  let diff=day-new Date().getDate();
-  if(diff>0)return `⏳ Due in ${diff} day${diff===1?'':'s'}`;
-  if(diff===0)return'⏰ Due today';
-  return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
+function duePill(o){
+  let x=o.due,paidOn=o.key&&x.paymentDates?x.paymentDates[o.key]:null,diff=daysFromToday(o.dateStr);
+  let label=o.paid?'✓ Paid'+(paidOn?' on '+formatDueDate(paidOn):''):remainingLabelFromDays(diff);
+  return `<span class="pill ${o.paid?'paid':diff<0?'overdue':''}" style="cursor:pointer" title="Tap to mark ${o.paid?'unpaid':'paid'}" onclick="toggleDue(${x.id},'${o.ym}',${o.day})">${formatDueDate(o.dateStr)}: ${label}</span>`
 }
-function remainingLabelFromDays(diff){
-  if(diff>0)return `⏳ Due in ${diff} day${diff===1?'':'s'}`;
-  if(diff===0)return'⏰ Due today';
-  return `⚠️ Overdue by ${Math.abs(diff)} day${Math.abs(diff)===1?'':'s'}`
-}
-// A card's due date isn't always "this month": if the due day falls earlier
-// in the calendar than the billing day (e.g. billed on the 14th, due on the
-// 3rd), that due date belongs to the month AFTER billing, not the current
-// month. This finds the actual due date for the most recent billing cycle.
-function cardDueDate(x){
-  let billingDay=x.billingDay||x.dueDay;
-  let now=new Date();now.setHours(0,0,0,0);
-  let y=now.getFullYear(),m=now.getMonth();
-  let mostRecentBilling=now.getDate()>=billingDay?new Date(y,m,billingDay):new Date(y,m-1,billingDay);
-  // Prefer an exact "N days after billing" cycle when given — this is how
-  // most real card cycles actually work, and avoids you having to manually
-  // work out which day-of-month that lands on (e.g. billed the 14th, 20-day
-  // cycle → automatically the 4th of next month).
-  if(x.cycleDays){
-    let d=new Date(mostRecentBilling);d.setDate(d.getDate()+x.cycleDays);return d
-  }
-  let dueMonthOffset=x.dueDay>=billingDay?0:1;
-  return new Date(mostRecentBilling.getFullYear(),mostRecentBilling.getMonth()+dueMonthOffset,x.dueDay)
-}
-function cardDaysUntilDue(x){
-  let due=cardDueDate(x);due.setHours(0,0,0,0);
-  let today=new Date();today.setHours(0,0,0,0);
-  return Math.round((due-today)/86400000)
-}
-function cardDueLabel(x){return remainingLabelFromDays(cardDaysUntilDue(x))}
 function renderDues(){
-  let ym=today().slice(0,7);
-  dueList.innerHTML=state.dues.map(x=>{
-    let pills=(x.days||[]).map(d=>{let dateStr=ym+'-'+pad(d);let paid=(x.paidDates||[]).includes(dateStr);let paidOn=x.paymentDates&&x.paymentDates[dateStr];return `<span class="pill ${paid?'paid':''}" style="cursor:pointer" onclick="toggleDueDay(${x.id},'${dateStr}')">${formatDueDate(dateStr)}: ${paid?'✓ Paid'+(paidOn?' on '+formatDueDate(paidOn):''):dueRemainingLabel(d)}</span>`}).join(' ');
-    return `<div class="due-flex"><b style="min-width:140px">${esc(x.name)}</b><span style="min-width:80px">${money(x.amount)}</span><span class="actions" style="flex:1;flex-wrap:wrap">${pills}</span><span class="actions"><button class="btn" onclick="editDue(${x.id})">Edit</button><button class="btn danger" onclick="deleteDue(${x.id})">Delete</button></span></div>`
-  }).join('')||'<p class="muted">📅 No monthly dues yet — add a bill above.</p>';
-  let pending=[];
-  for(let x of state.dues)for(let d of (x.days||[])){let dateStr=ym+'-'+pad(d);if(!(x.paidDates||[]).includes(dateStr))pending.push({name:x.name,amount:x.amount,day:d,dateStr})}
-  pending.sort((a,b)=>a.day-b.day);
-  dashDues.innerHTML=pending.map(x=>`<div class="row"><b>${esc(x.name)}</b><span>${money(x.amount)}</span><span>${formatDueDate(x.dateStr)}</span><span class="pill">${dueRemainingLabel(x.day)}</span></div>`).join('')||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
+  let ym=thisYM();
+  $('dueList').innerHTML=state.dues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(x=>{
+    let occ=dueOccurrences(x,dueFloorYM(x),ym).filter(o=>o.ym===ym||!o.paid);
+    let pills=occ.map(duePill).join(' ');
+    if(!occ.some(o=>o.ym===ym)){let n=nextDueOccurrence(x);if(n)pills+=` <span class="muted" style="font-size:12.5px">Next due ${formatDueDate(n.dateStr)} ${n.dateStr.slice(0,4)}</span>`}
+    return `<div class="due-flex"><span style="min-width:140px"><b>${esc(x.name)}</b><br><span class="muted" style="font-size:12px">${FREQ_LABEL[x.frequency]||'Monthly'}</span></span><span style="min-width:80px">${money(x.amount)}</span><span class="actions" style="flex:1;flex-wrap:wrap">${pills}</span><span class="actions"><button class="btn" onclick="editDue(${x.id})">Edit</button><button class="btn danger" onclick="deleteDue(${x.id})">Delete</button></span></div>`
+  }).join('')||'<p class="muted">📅 No dues yet — add a bill above.</p>';
+  let pending=pendingDueOccurrences();
+  $('dashDues').innerHTML=pending.map(o=>{let diff=daysFromToday(o.dateStr);return `<div class="row"><b>${esc(o.due.name)}</b><span>${money(o.due.amount)}</span><span>${formatDueDate(o.dateStr)}</span><span class="pill ${diff<0?'overdue':''}" style="cursor:pointer" title="Tap to mark paid" onclick="toggleDue(${o.due.id},'${o.ym}',${o.day})">${remainingLabelFromDays(diff)}</span></div>`}).join('')
+    ||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
 }
 
-// ---------- Credit Cards (balance + due date + payment tracking) ----------
+// ---------- Credit Cards ----------
 let editingCardId=null;
-function resetCardForm(){document.getElementById('cardName').value='';document.getElementById('cardBalance').value='';document.getElementById('cardLimit').value='';document.getElementById('cardBillingDay').value='';document.getElementById('cardCycleDays').value='';document.getElementById('cardDueDay').value='';editingCardId=null;document.getElementById('cardSaveBtn').textContent='Save Card';document.getElementById('cardCancelEdit').classList.add('hidden')}
-function cardRemaining(x){return x.balance-(x.payments||[]).reduce((a,p)=>a+p.amount,0)}
+function resetCardForm(){['cardName','cardBalance','cardLimit','cardBillingDay','cardCycleDays','cardDueDay'].forEach(k=>$(k).value='');editingCardId=null;$('cardSaveBtn').textContent='Save Card';$('cardCancelEdit').classList.add('hidden')}
+// Expenses logged on this card after its latest statement
+function cardSpendExpenses(x){
+  if(!x.statementDate)return[];
+  return state.expense.filter(e=>e.cardId===x.id&&(e.date>x.statementDate||(e.date===x.statementDate&&(e.createdAt||0)>(x.statementAt||0))))
+}
+function cardPaid(x){return sum(x.payments||[])}
+function cardOutstanding(x){return(+x.balance||0)+sum(cardSpendExpenses(x))-cardPaid(x)}
 async function addCard(){
-  let cardName=val('cardName'),balance=+val('cardBalance'),limit=val('cardLimit')?+val('cardLimit'):null,billingDay=val('cardBillingDay')?parseInt(val('cardBillingDay'),10):null,cycleDays=val('cardCycleDays')?parseInt(val('cardCycleDays'),10):null,dueDayRaw=val('cardDueDay'),dueDay=dueDayRaw?parseInt(dueDayRaw,10):null;
-  if(!cardName||!balance)return alert('Enter card name and current outstanding');
+  let cardName=val('cardName').trim(),balStr=val('cardBalance'),balance=+balStr,limit=val('cardLimit')?+val('cardLimit'):null,
+    billingDay=val('cardBillingDay')?parseInt(val('cardBillingDay'),10):null,cycleDays=val('cardCycleDays')?parseInt(val('cardCycleDays'),10):null,
+    dueDay=val('cardDueDay')?parseInt(val('cardDueDay'),10):null;
+  if(!cardName||balStr==='')return alert('Enter card name and current outstanding (0 is fine)');
+  if(isNaN(balance)||balance<0)return alert('Outstanding must be 0 or more');
   if(!cycleDays&&!dueDay)return alert('Enter either a Due day, or a billing-cycle length in days');
   if(dueDay!=null&&(dueDay<1||dueDay>31))return alert('Due day must be between 1 and 31');
   if(billingDay!=null&&(billingDay<1||billingDay>31))return alert('Billing day must be between 1 and 31');
   if(cycleDays&&!billingDay)return alert('A billing-cycle length needs a Billing day to count from');
   let existing=editingCardId?state.creditcards.find(c=>c.id===editingCardId):null;
-  let obj={cardName,balance,limit,billingDay,cycleDays,dueDay:dueDay||billingDay,payments:existing?existing.payments||[]:[]};
-  if(editingCardId)obj.id=editingCardId;
-  await save('creditcards',obj);resetCardForm();refreshAndSync()
+  let obj={...(existing||{}),cardName,balance,limit,billingDay,cycleDays,dueDay:dueDay||billingDay,payments:existing?.payments||[],
+    statementDate:existing?.statementDate||today(),statementAt:existing?.statementAt||Date.now()};
+  await save('creditcards',obj);resetCardForm();refreshAndSync();toast(existing?'Card updated':'Card saved')
 }
-function editCard(id){let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;document.getElementById('cardName').value=x.cardName;document.getElementById('cardBalance').value=x.balance;document.getElementById('cardLimit').value=x.limit||'';document.getElementById('cardBillingDay').value=x.billingDay||'';document.getElementById('cardCycleDays').value=x.cycleDays||'';document.getElementById('cardDueDay').value=x.cycleDays?'':x.dueDay;document.getElementById('cardSaveBtn').textContent='Update Card';document.getElementById('cardCancelEdit').classList.remove('hidden');show('cards',document.querySelectorAll('.tabs button')[4]);window.scrollTo(0,0)}
-function cancelCardEdit(){resetCardForm()}
+function editCard(id){
+  let x=state.creditcards.find(r=>r.id===id);if(!x)return;editingCardId=id;
+  $('cardName').value=x.cardName;$('cardBalance').value=x.balance;$('cardLimit').value=x.limit||'';$('cardBillingDay').value=x.billingDay||'';$('cardCycleDays').value=x.cycleDays||'';$('cardDueDay').value=x.cycleDays?'':x.dueDay;
+  $('cardSaveBtn').textContent='Update Card';$('cardCancelEdit').classList.remove('hidden');show('cards');window.scrollTo(0,0)
+}
 async function deleteCard(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
-  if(!confirm('Delete "'+x.cardName+'"?'))return;
-  // clean up any expenses an OLDER version of this feature may have auto-logged
-  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',expId);
-  await deleteWithTombstone('creditcards',id);refreshAndSync()
+  if(!await confirmModal('Delete "'+x.cardName+'"? Expenses logged on it stay in your expense history.','Delete',true))return;
+  for(let expId of Object.values(x.linkedExpenses||{}))await deleteWithTombstone('expense',+expId);
+  await deleteWithTombstone('creditcards',id);refreshAndSync();toast('Card deleted')
 }
 async function addCardPayment(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
-  let remaining=cardRemaining(x);
-  let amtStr=prompt('How much did you just pay towards '+x.cardName+'? (remaining: '+money(remaining)+')');
-  if(amtStr===null)return;
-  let amt=+amtStr;
-  if(!amt||amt<=0)return alert('Enter a valid positive amount.');
-  x.payments=x.payments||[];
-  x.payments.push({date:today(),amount:amt});
-  await save('creditcards',x);refreshAndSync()
+  let remaining=cardOutstanding(x);
+  let fields=[{name:'amount',label:'Amount paid',type:'number',step:'0.01',inputmode:'decimal',value:remaining>0?remaining:''},{name:'date',label:'Paid on',type:'date',value:today()}];
+  if(meta.accounts.length)fields.push({name:'account',label:'Paid from account',type:'select',options:accountOptions(),value:''});
+  let r=await modal({title:'Payment towards '+x.cardName,message:'Outstanding: '+money(remaining),fields,okText:'Save Payment'});
+  if(!r)return;
+  let amt=parseAmount(r.amount);if(!amt)return alert('Enter a valid positive amount.');
+  if(amt>remaining+0.001&&!await confirmModal(`That's ${money(amt-remaining)} more than the outstanding ${money(remaining)}. Record it anyway?`,'Record'))return;
+  x.payments=x.payments||[];x.payments.push({date:r.date||today(),amount:amt,account:r.account||''});
+  await save('creditcards',x);refreshAndSync();toast('Payment recorded')
 }
 async function newStatement(id){
   let x=state.creditcards.find(c=>c.id===id);if(!x)return;
-  let newBalStr=prompt('New statement for '+x.cardName+' — enter the new outstanding balance:',x.balance);
-  if(newBalStr===null)return;
-  let newBal=+newBalStr;
-  if(newBal<0||isNaN(newBal))return alert('Enter a valid amount (0 or more).');
-  x.balance=newBal;x.payments=[];
-  await save('creditcards',x);refreshAndSync()
+  let r=await modal({title:'New statement — '+x.cardName,message:'Enter the total due on your new bill. Payments so far are archived and new card spends start counting from today.',fields:[{name:'bal',label:'New statement outstanding',type:'number',step:'0.01',inputmode:'decimal',value:Math.max(0,Math.round(cardOutstanding(x)*100)/100)}],okText:'Start new cycle'});
+  if(!r)return;
+  let newBal=+r.bal;if(r.bal===''||isNaN(newBal)||newBal<0)return alert('Enter a valid amount (0 or more).');
+  // keep payments that came out of an account, so account balances stay right
+  x.pastPayments=[...(x.pastPayments||[]),...(x.payments||[]).filter(p=>p.account)];
+  x.balance=newBal;x.payments=[];x.statementDate=today();x.statementAt=Date.now();
+  await save('creditcards',x);refreshAndSync();toast('New statement started')
 }
+// Due date for the most recent billing cycle. Days like 31 clamp to month end.
+function cardDueDate(x){
+  let billingDay=x.billingDay||x.dueDay||1;
+  let now=new Date();now.setHours(0,0,0,0);
+  let y=now.getFullYear(),m=now.getMonth();
+  let thisBill=dateInMonth(y,m,billingDay);
+  let bill=now>=thisBill?thisBill:dateInMonth(y,m-1,billingDay);
+  if(x.cycleDays){let d=new Date(bill);d.setDate(d.getDate()+x.cycleDays);return d}
+  let offset=x.dueDay>=billingDay?0:1;
+  return dateInMonth(bill.getFullYear(),bill.getMonth()+offset,x.dueDay||billingDay)
+}
+function cardDaysUntilDue(x){return daysFromToday(ymd(cardDueDate(x)))}
 function renderCards(){
-  cardList.innerHTML=state.creditcards.map(x=>{
-    let remaining=cardRemaining(x);
-    let paidSoFar=(x.payments||[]).reduce((a,p)=>a+p.amount,0);
-    let util=x.limit?Math.round(x.balance/x.limit*100):null;
-    let outstandingLine=paidSoFar>0&&remaining>0
-      ?`Outstanding: ${money(remaining)} <span class="muted" style="font-weight:400">(${money(paidSoFar)} of ${money(x.balance)} paid)</span>`
-      :remaining<=0&&x.balance>0
-      ?`<span class="income">✓ Fully paid this cycle</span>`
-      :`Outstanding: ${money(x.balance)}`;
+  $('cardList').innerHTML=state.creditcards.map(x=>{
+    let out=cardOutstanding(x),spends=sum(cardSpendExpenses(x)),paid=cardPaid(x),billed=(+x.balance||0)+spends;
+    let breakdown=(spends>0||paid>0)?` <span class="muted" style="font-weight:400">(statement ${money(x.balance)}${spends?` + new spends ${money(spends)}`:''}${paid?` − paid ${money(paid)}`:''})</span>`:'';
+    let outstandingLine=out<=0&&billed>0?`<span class="income">✓ Fully paid this cycle</span>${breakdown}`:`Outstanding: ${money(out)}${breakdown}`;
+    let util=x.limit?Math.round(Math.max(out,0)/x.limit*100):null;
     let billingInfo=x.billingDay?`<span class="muted" style="min-width:120px">Billing day ${x.billingDay}${x.cycleDays?' + '+x.cycleDays+'d cycle':''}</span>`:'';
-    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}<span class="pill">${formatDueDate(ymd(cardDueDate(x)))}: ${cardDueLabel(x)}</span><span class="actions">${remaining>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
+    let diff=cardDaysUntilDue(x);
+    let pill=out<=0?`<span class="pill paid">✓ Paid</span>`:`<span class="pill ${diff<0?'overdue':''}">${formatDueDate(ymd(cardDueDate(x)))}: ${remainingLabelFromDays(diff)}</span>`;
+    let hist=(x.payments||[]).length?`<details class="hist"><summary>Payments this cycle (${x.payments.length})</summary><ul>${x.payments.map(p=>`<li>${safeDisplayDate(p.date)} — ${money(p.amount)}${p.account?' from '+esc(accountName(p.account)):''}</li>`).join('')}</ul></details>`:'';
+    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}${hist}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}${pill}<span class="actions">${out>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
   }).join('')||'<p class="muted">💳 No credit cards added yet.</p>';
-  let totalBalance=state.creditcards.reduce((a,x)=>a+cardRemaining(x),0);
+  let totalOut=state.creditcards.reduce((a,x)=>a+Math.max(0,cardOutstanding(x)),0);
   let totalLimit=state.creditcards.reduce((a,x)=>a+(x.limit||0),0);
-  let cardSummaryEl=document.getElementById('cardSummary');
-  if(cardSummaryEl)cardSummaryEl.innerHTML=`<div class="card"><small>Total Outstanding</small><div class="amount expense">${money(totalBalance)}</div></div>${totalLimit?`<div class="card"><small>Total Credit Limit</small><div class="amount">${money(totalLimit)}</div></div>`:''}`
+  $('cardSummary').innerHTML=`<div class="card"><small>Total Outstanding</small><div class="amount expense">${money(totalOut)}</div></div>${totalLimit?`<div class="card"><small>Total Credit Limit</small><div class="amount">${money(totalLimit)}</div></div><div class="card"><small>Available Credit</small><div class="amount income">${money(totalLimit-totalOut)}</div></div>`:''}`
 }
 
-// ---------- Advances (money lent/borrowed) ----------
-let editingAdvanceId=null;
-function resetAdvanceForm(){document.getElementById('advPerson').value='';document.getElementById('advAmount').value='';document.getElementById('advDueDate').value='';document.getElementById('advNote').value='';document.getElementById('advDirection').value='given';editingAdvanceId=null;document.getElementById('advSaveBtn').textContent='Save Advance';document.getElementById('advCancelEdit').classList.add('hidden')}
-function advanceRemaining(x){return x.amount-(x.payments||[]).reduce((a,p)=>a+p.amount,0)}
-async function addAdvance(){
-  let person=val('advPerson'),amount=+val('advAmount'),direction=val('advDirection');
-  if(!person||!amount)return alert('Enter person and amount');
-  let existing=editingAdvanceId?state.advances.find(a=>a.id===editingAdvanceId):null;
-  let obj={person,amount,direction,status:existing?existing.status:'pending',dueDate:val('advDueDate'),note:val('advNote'),payments:existing?existing.payments||[]:[]};
-  if(existing&&existing.settledDate)obj.settledDate=existing.settledDate;
-  if(editingAdvanceId)obj.id=editingAdvanceId;
-  await save('advances',obj);resetAdvanceForm();refreshAndSync()
+// ---------- Accounts ----------
+function accountBalance(a){
+  let inc=sum(state.income.filter(x=>x.account===a.id));
+  let exp=sum(state.expense.filter(x=>x.account===a.id&&x.method!=='Card'));
+  let cardPay=0;for(let c of state.creditcards)cardPay+=sum([...(c.payments||[]),...(c.pastPayments||[])].filter(p=>p.account===a.id));
+  return(+a.opening||0)+inc-exp-cardPay
 }
-function editAdvance(id){let x=state.advances.find(r=>r.id===id);if(!x)return;editingAdvanceId=id;document.getElementById('advPerson').value=x.person;document.getElementById('advAmount').value=x.amount;document.getElementById('advDirection').value=x.direction;document.getElementById('advDueDate').value=x.dueDate||'';document.getElementById('advNote').value=x.note||'';document.getElementById('advSaveBtn').textContent='Update Advance';document.getElementById('advCancelEdit').classList.remove('hidden');show('advances',document.querySelectorAll('.tabs button')[5]);window.scrollTo(0,0)}
-function cancelAdvanceEdit(){resetAdvanceForm()}
+function addAccount(){
+  let name=val('accName').trim();if(!name)return alert('Enter an account name');
+  if(meta.accounts.some(a=>a.name.toLowerCase()===name.toLowerCase()))return alert('An account with that name already exists');
+  let opening=parseFloat(val('accOpening'))||0;
+  meta.accounts.push({id:uid(),name,opening});$('accName').value='';$('accOpening').value='';metaChanged();toast('Account added')
+}
+async function editAccount(id){
+  let a=meta.accounts.find(a=>a.id===id);if(!a)return;
+  let r=await modal({title:'Edit account',fields:[{name:'name',label:'Name',value:a.name},{name:'opening',label:'Opening balance',type:'number',step:'0.01',value:a.opening}],okText:'Save'});
+  if(!r)return;if(!r.name.trim())return alert('Name can\'t be empty');
+  a.name=r.name.trim();a.opening=parseFloat(r.opening)||0;metaChanged()
+}
+async function deleteAccount(id){
+  let a=meta.accounts.find(a=>a.id===id);if(!a)return;
+  if(!await confirmModal(`Remove account "${a.name}"? Past entries keep their amounts but will no longer count towards an account.`,'Remove',true))return;
+  let idx=meta.accounts.indexOf(a);meta.accounts.splice(idx,1);metaChanged();
+  toast('Account removed',{undo:()=>{meta.accounts.splice(idx,0,a);metaChanged()}})
+}
+function renderAccounts(){
+  $('accountList').innerHTML=meta.accounts.map(a=>`<div class="row" style="grid-template-columns:1fr 1fr auto"><b>${esc(a.name)}</b><span class="${accountBalance(a)>=0?'income':'expense'}">${money(accountBalance(a))} <span class="muted" style="font-size:12px">(opening ${money(a.opening)})</span></span><span class="actions"><button class="btn" onclick="editAccount('${a.id}')">Edit</button><button class="btn danger" onclick="deleteAccount('${a.id}')">Remove</button></span></div>`).join('')||'<p class="muted">No accounts yet.</p>';
+  $('dashAccountsWrap').classList.toggle('hidden',!meta.accounts.length);
+  let total=meta.accounts.reduce((t,a)=>t+accountBalance(a),0);
+  $('dashAccounts').innerHTML=meta.accounts.map(a=>{let b=accountBalance(a);return `<div class="insight"><small>${esc(a.name)}</small><b class="${b>=0?'income':'expense'}">${money(b)}</b></div>`}).join('')+(meta.accounts.length>1?`<div class="insight"><small>All accounts</small><b class="balance">${money(total)}</b></div>`:'')
+}
+
+// ---------- Recurring entries ----------
+function addRecurring(){
+  let type=val('rType'),amount=parseAmount(val('rAmount')),day=parseInt(val('rDay'),10),cat=val('rCat');
+  if(!amount)return alert('Enter an amount greater than 0');
+  if(!(day>=1&&day<=31))return alert('Enter a day of month between 1 and 31');
+  let startYM=val('rStart')||thisYM();
+  meta.recurring.push({id:uid(),type,amount,cat,method:type==='expense'?val('rMethod'):'',account:val('rMethod')==='Card'&&type==='expense'?'':val('rAccount'),day,startYM,note:val('rNote').trim(),lastYM:addMonths(startYM,-1),active:true});
+  ['rAmount','rDay','rNote'].forEach(k=>$(k).value='');
+  metaChanged();toast('Recurring entry saved');runRecurring()
+}
+async function toggleRecurring(id){let r=meta.recurring.find(r=>r.id===id);if(!r)return;r.active=!r.active;if(r.active&&r.lastYM<addMonths(thisYM(),-1))r.lastYM=addMonths(thisYM(),-1);metaChanged();if(r.active)runRecurring()}
+async function deleteRecurring(id){
+  let idx=meta.recurring.findIndex(r=>r.id===id);if(idx<0)return;
+  let r=meta.recurring[idx];
+  if(!await confirmModal(`Stop and remove the recurring "${r.note||r.cat}"? Entries it already logged stay.`,'Remove',true))return;
+  meta.recurring.splice(idx,1);metaChanged();toast('Recurring entry removed',{undo:()=>{meta.recurring.splice(idx,0,r);metaChanged()}})
+}
+let recurringRunning=false;
+async function runRecurring(){
+  if(recurringRunning)return;recurringRunning=true;
+  try{
+    let ym=thisYM(),todayStr=today(),created=0,changed=false;
+    for(let r of meta.recurring){
+      if(!r.active)continue;
+      let m=r.lastYM?addMonths(r.lastYM,1):r.startYM;
+      if(m<r.startYM)m=r.startYM;
+      if(monthsBetween(m,ym)>12)m=addMonths(ym,-12); // never back-fill more than a year
+      while(monthsBetween(m,ym)>=0){
+        let date=dateForDay(m,r.day);
+        if(date>todayStr)break;
+        let key=r.id+':'+m;
+        if(!state[r.type].some(x=>x.recurKey===key)){ // another device may already have logged it
+          let obj={date,amount:r.amount,cat:r.cat,note:(r.note||r.cat)+' (recurring)',account:r.account||'',recurKey:key};
+          if(r.type==='expense')obj.method=r.method||'';
+          await save(r.type,obj);created++
+        }
+        r.lastYM=m;changed=true;m=addMonths(m,1)
+      }
+    }
+    if(changed)saveMeta();
+    if(created){await refreshAndSync();toast(`${created} recurring entr${created===1?'y':'ies'} added`)}
+  }finally{recurringRunning=false}
+}
+function renderRecurList(){
+  $('recurList').innerHTML=meta.recurring.map(r=>{
+    let next=r.lastYM?addMonths(r.lastYM,1):r.startYM;if(next<r.startYM)next=r.startYM;
+    return `<div class="row" style="grid-template-columns:1.4fr 1fr 1fr auto"><span><b>${esc(r.note||r.cat)}</b><br><span class="muted" style="font-size:12px">${r.type==='income'?'Income':'Expense'} · ${esc(r.cat)}${r.method?' · '+esc(r.method):''}${r.account?' · '+esc(accountName(r.account)):''}</span></span><b class="${r.type==='income'?'income':'expense'}">${money(r.amount)}</b><span class="muted">Day ${r.day} monthly<br>${r.active?'Next: '+formatDueDate(dateForDay(next,r.day)):'⏸ Paused'}</span><span class="actions"><button class="btn" onclick="toggleRecurring('${r.id}')">${r.active?'Pause':'Resume'}</button><button class="btn danger" onclick="deleteRecurring('${r.id}')">Remove</button></span></div>`
+  }).join('')||'<p class="muted">No recurring entries yet.</p>'
+}
+
+// ---------- Categories ----------
+function addCategory(type){
+  let inp=$(type==='income'?'newIncomeCat':'newExpenseCat'),name=inp.value.trim();if(!name)return;
+  let list=type==='income'?meta.incomeCats:meta.expenseCats;
+  if(list.some(c=>c.toLowerCase()===name.toLowerCase()))return alert('That category already exists');
+  list.push(name);inp.value='';metaChanged();renderBudgetForm()
+}
+function removeCategory(type,idx){
+  let list=type==='income'?meta.incomeCats:meta.expenseCats;
+  if(list.length<=1)return alert('Keep at least one category');
+  let [name]=list.splice(idx,1);metaChanged();renderBudgetForm();
+  toast(`Category "${name}" removed`,{undo:()=>{list.splice(idx,0,name);metaChanged();renderBudgetForm()}})
+}
+function renderCategoryChips(){
+  const chips=(list,type)=>list.map((c,i)=>`<span class="chip">${esc(c)}<button title="Remove" onclick="removeCategory('${type}',${i})">×</button></span>`).join('');
+  $('expenseCatChips').innerHTML=chips(meta.expenseCats,'expense');
+  $('incomeCatChips').innerHTML=chips(meta.incomeCats,'income')
+}
+function renderPlan(withBudgetForm=true){renderCategoryChips();renderRecurList();renderAccounts();if(withBudgetForm)renderBudgetForm()}
+
+// ---------- Advances ----------
+let editingAdvanceId=null;
+function resetAdvanceForm(){['advPerson','advPhone','advAmount','advDueDate','advNote'].forEach(k=>$(k).value='');$('advDirection').value='given';editingAdvanceId=null;$('advSaveBtn').textContent='Save Advance';$('advCancelEdit').classList.add('hidden')}
+function advanceRemaining(x){return x.amount-sum(x.payments||[])}
+function personKey(n){return String(n||'').trim().toLowerCase()}
+async function addAdvance(){
+  let person=val('advPerson').trim(),amount=parseAmount(val('advAmount')),direction=val('advDirection');
+  if(!person||!amount)return alert('Enter person and an amount greater than 0');
+  let existing=editingAdvanceId?state.advances.find(a=>a.id===editingAdvanceId):null;
+  // reuse the phone number already saved for this person if none entered
+  let phone=val('advPhone').trim()||(state.advances.find(a=>personKey(a.person)===personKey(person)&&a.phone)||{}).phone||'';
+  let obj={...(existing||{}),person,phone,amount,direction,dueDate:val('advDueDate'),note:val('advNote').trim(),payments:existing?.payments||[],status:existing?.status||'pending'};
+  // re-check settled/pending after an amount change
+  let rem=advanceRemaining(obj);
+  if(rem<=0&&obj.status!=='settled'){obj.status='settled';obj.settledDate=today()}
+  else if(rem>0&&obj.status==='settled'){obj.status='pending';delete obj.settledDate}
+  await save('advances',obj);resetAdvanceForm();refreshAndSync();toast(existing?'Advance updated':'Advance saved')
+}
+function editAdvance(id){
+  let x=state.advances.find(r=>r.id===id);if(!x)return;editingAdvanceId=id;
+  $('advPerson').value=x.person;$('advPhone').value=x.phone||'';$('advAmount').value=x.amount;$('advDirection').value=x.direction;$('advDueDate').value=normDate(x.dueDate)||'';$('advNote').value=x.note||'';
+  $('advSaveBtn').textContent='Update Advance';$('advCancelEdit').classList.remove('hidden');show('advances');window.scrollTo(0,0)
+}
 async function toggleAdvanceStatus(id){
   let x=state.advances.find(a=>a.id===id);if(!x)return;
+  x.payments=x.payments||[];
   if(x.status==='pending'){
-    // marking fully settled by hand — log one payment covering whatever's left, so the math still adds up
     let remaining=advanceRemaining(x);
-    if(remaining>0){x.payments=x.payments||[];x.payments.push({date:today(),amount:remaining})}
+    if(remaining>0)x.payments.push({date:today(),amount:remaining,auto:true}); // marked so it can be undone
     x.status='settled';x.settledDate=today()
   }else{
-    x.status='pending';delete x.settledDate
+    // reopening: drop the automatic "settle" payment so the balance comes back
+    let i=x.payments.map(p=>!!p.auto).lastIndexOf(true);
+    if(i>=0)x.payments.splice(i,1);
+    x.status=advanceRemaining(x)>0?'pending':'settled';
+    if(x.status==='pending')delete x.settledDate
   }
-  await save('advances',x);refreshAndSync()
+  await save('advances',x);await refreshAndSync();
+  toast(`${x.person}: ${x.status==='settled'?'marked settled':'reopened'}`,{undo:()=>toggleAdvanceStatus(id)})
 }
 async function addAdvancePayment(id){
   let x=state.advances.find(a=>a.id===id);if(!x)return;
   let remaining=advanceRemaining(x);
-  let verb=x.direction==='given'?'they paid you back':'you paid back';
-  let amtStr=prompt('How much '+verb+' just now? (remaining: '+money(remaining)+')');
-  if(amtStr===null)return;
-  let amt=+amtStr;
-  if(!amt||amt<=0)return alert('Enter a valid positive amount.');
-  x.payments=x.payments||[];
-  x.payments.push({date:today(),amount:amt});
-  if(advanceRemaining(x)<=0){x.status='settled';x.settledDate=today()}
-  await save('advances',x);refreshAndSync()
+  let r=await modal({title:x.direction==='given'?`${x.person} paid you back`:`You paid ${x.person} back`,message:'Remaining: '+money(remaining),fields:[{name:'amount',label:'Amount',type:'number',step:'0.01',inputmode:'decimal',value:''},{name:'date',label:'Date',type:'date',value:today()}],okText:'Save'});
+  if(!r)return;
+  let amt=parseAmount(r.amount);if(!amt)return alert('Enter a valid positive amount.');
+  if(amt>remaining+0.001&&!await confirmModal(`That's more than the remaining ${money(remaining)}. Record it anyway?`,'Record'))return;
+  x.payments=x.payments||[];x.payments.push({date:r.date||today(),amount:amt});
+  if(advanceRemaining(x)<=0){x.status='settled';x.settledDate=r.date||today()}
+  await save('advances',x);refreshAndSync();toast('Repayment recorded')
 }
-function safeDisplayDate(v){
-  if(!v)return'';
-  let d10=String(v).slice(0,10); // tolerate any leftover full-timestamp value from before the sync fix
-  return /^\d{4}-\d{2}-\d{2}$/.test(d10)?formatDueDate(d10):esc(String(v))
+function waLink(phone,msg){
+  let d=String(phone||'').replace(/\D/g,'');if(d.length===10)d='91'+d;
+  return 'https://wa.me/'+d+'?text='+encodeURIComponent(msg)
 }
 function renderAdvances(){
-  let net={};
-  for(let a of state.advances){if(a.status!=='pending')continue;let rem=advanceRemaining(a);net[a.person]=(net[a.person]||0)+(a.direction==='given'?rem:-rem)}
-  let owedToYou=Object.values(net).filter(v=>v>0).reduce((a,b)=>a+b,0);
-  let youOwe=Object.values(net).filter(v=>v<0).reduce((a,b)=>a+Math.abs(b),0);
-  let summaryEl=document.getElementById('advanceSummary');
-  if(summaryEl)summaryEl.innerHTML=`<div class="card"><small>Owed to you</small><div class="amount income">${money(owedToYou)}</div></div><div class="card"><small>You owe</small><div class="amount expense">${money(youOwe)}</div></div>`;
+  let people=new Map();
+  for(let a of state.advances){
+    let k=personKey(a.person);if(!k)continue;
+    let p=people.get(k)||{name:a.person.trim(),net:0,phone:'',count:0};
+    if(a.phone)p.phone=a.phone;
+    if(a.status==='pending'){p.net+=(a.direction==='given'?1:-1)*advanceRemaining(a);p.count++}
+    people.set(k,p)
+  }
+  let list=[...people.values()].filter(p=>Math.abs(p.net)>0.001).sort((a,b)=>Math.abs(b.net)-Math.abs(a.net));
+  let owedToYou=list.filter(p=>p.net>0).reduce((a,p)=>a+p.net,0),youOwe=list.filter(p=>p.net<0).reduce((a,p)=>a-p.net,0);
+  $('advanceSummary').innerHTML=`<div class="card"><small>Owed to you</small><div class="amount income">${money(owedToYou)}</div></div><div class="card"><small>You owe</small><div class="amount expense">${money(youOwe)}</div></div>`;
+  $('advancePeople').innerHTML=list.map(p=>{
+    let msg=`Hi ${p.name}, just a gentle reminder about the ${money(p.net)} pending between us. Thanks!`;
+    return `<div class="row" style="grid-template-columns:1fr 1.2fr auto"><b>${esc(p.name)}</b><span class="${p.net>0?'income':'expense'}">${p.net>0?'Owes you':'You owe'} ${money(Math.abs(p.net))} <span class="muted" style="font-size:12px">(${p.count} open)</span></span><span class="actions">${p.net>0?`<a class="btn" href="${esc(waLink(p.phone,msg))}" target="_blank" rel="noopener">💬 WhatsApp reminder</a>`:''}</span></div>`
+  }).join('')||'<p class="muted">Nobody owes anything right now.</p>';
   let rows=state.advances.slice().sort((a,b)=>(a.status==='settled'?1:0)-(b.status==='settled'?1:0)||b.id-a.id);
-  advanceList.innerHTML=rows.map(x=>{
-    let paidSoFar=(x.payments||[]).reduce((a,p)=>a+p.amount,0);
-    let remaining=advanceRemaining(x);
-    let amountLine=paidSoFar>0&&x.status==='pending'
-      ?`${x.direction==='given'?'They owe':'You owe'} ${money(remaining)} <span class="muted" style="font-weight:400">(${money(paidSoFar)} of ${money(x.amount)} repaid)</span>`
-      :`${x.direction==='given'?'They owe':'You owe'} ${money(x.amount)}`;
-    return `<div class="row"><span>${esc(x.person)}</span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${safeDisplayDate(x.dueDate)} ${x.note?esc(x.note):''}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'✓ Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'⏳ Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id})">Delete</button></span></div>`
+  $('advanceList').innerHTML=rows.map(x=>{
+    let paidSoFar=sum(x.payments||[]),remaining=advanceRemaining(x);
+    let who=x.direction==='given'?'They owe':'You owe';
+    let amountLine=x.status==='settled'
+      ?`<span class="muted">✓ ${money(x.amount)} ${x.direction==='given'?'lent':'borrowed'} — repaid</span>`
+      :paidSoFar>0?`${who} ${money(remaining)} <span class="muted" style="font-weight:400">(${money(paidSoFar)} of ${money(x.amount)} repaid)</span>`
+      :`${who} ${money(x.amount)}`;
+    let hist=(x.payments||[]).length?`<details class="hist"><summary>History (${x.payments.length})</summary><ul><li>${safeDisplayDate(x.createdAt?ymd(new Date(x.createdAt)):'')||'—'} — ${x.direction==='given'?'lent':'borrowed'} ${money(x.amount)}</li>${x.payments.map(p=>`<li>${safeDisplayDate(p.date)} — repaid ${money(p.amount)}${p.auto?' (marked settled)':''}</li>`).join('')}</ul></details>`:'';
+    let due=x.dueDate&&x.status==='pending'?`Repay by ${safeDisplayDate(x.dueDate)}`:'';
+    return `<div class="row"><span><b>${esc(x.person)}</b></span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${due} ${x.note?esc(x.note):''}${hist}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" title="Tap to ${x.status==='settled'?'reopen':'mark fully settled'}" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'✓ Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'⏳ Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Repayment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id},'Advance')">Delete</button></span></div>`
   }).join('')||'<p class="muted">🤝 No advances yet — track money lent or borrowed here.</p>'
 }
 
 // ---------- Notes ----------
 let editingNoteId=null;
-function resetNoteForm(){document.getElementById('noteTitle').value='';document.getElementById('noteContent').value='';editingNoteId=null;document.getElementById('noteSaveBtn').textContent='Save Note';document.getElementById('noteCancelEdit').classList.add('hidden')}
+function resetNoteForm(){$('noteTitle').value='';$('noteContent').value='';editingNoteId=null;$('noteSaveBtn').textContent='Save Note';$('noteCancelEdit').classList.add('hidden')}
 async function addNote(){
-  let title=val('noteTitle');if(!title)return alert('Enter a title');
-  let obj={title,content:val('noteContent'),date:today()};
-  if(editingNoteId)obj.id=editingNoteId;
-  await save('notes',obj);resetNoteForm();refreshAndSync()
+  let title=val('noteTitle').trim();if(!title)return alert('Enter a title');
+  let existing=editingNoteId?state.notes.find(n=>n.id===editingNoteId):null;
+  let obj={...(existing||{}),title,content:val('noteContent'),date:today()};
+  await save('notes',obj);resetNoteForm();refreshAndSync();toast(existing?'Note updated':'Note saved')
 }
-function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;document.getElementById('noteTitle').value=x.title;document.getElementById('noteContent').value=x.content||'';document.getElementById('noteSaveBtn').textContent='Update Note';document.getElementById('noteCancelEdit').classList.remove('hidden');show('notes',document.querySelectorAll('.tabs button')[7]);window.scrollTo(0,0)}
-function cancelNoteEdit(){resetNoteForm()}
+function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;$('noteTitle').value=x.title;$('noteContent').value=x.content||'';$('noteSaveBtn').textContent='Update Note';$('noteCancelEdit').classList.remove('hidden');show('notes');window.scrollTo(0,0)}
 function renderNotes(){
-  let rows=state.notes.slice().sort((a,b)=>b.id-a.id);
-  noteList.innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id})">Delete</button></span></div>`).join('')||'<p class="muted">📝 No notes yet.</p>'
+  let rows=state.notes.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)||b.id-a.id);
+  $('noteList').innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id},'Note')">Delete</button></span></div>`).join('')||'<p class="muted">📝 No notes yet.</p>'
 }
 
 // ---------- Documents ----------
-let documentUrlCache=new Map(); // doc.id -> object URL, created once and reused (avoids leaking a new blob URL on every render)
-function getDocumentUrl(doc){
-  if(!doc.blob)return'';
-  if(!documentUrlCache.has(doc.id))documentUrlCache.set(doc.id,URL.createObjectURL(doc.blob));
-  return documentUrlCache.get(doc.id)
-}
+let documentUrlCache=new Map();
+function getDocumentUrl(doc){if(!doc.blob)return'';if(!documentUrlCache.has(doc.id))documentUrlCache.set(doc.id,URL.createObjectURL(doc.blob));return documentUrlCache.get(doc.id)}
 function revokeDocumentUrl(id){if(documentUrlCache.has(id)){URL.revokeObjectURL(documentUrlCache.get(id));documentUrlCache.delete(id)}}
 function revokeAllDocumentUrls(){for(let url of documentUrlCache.values())URL.revokeObjectURL(url);documentUrlCache.clear()}
-async function deleteDocument(id){revokeDocumentUrl(id);await deleteRecord('documents',id);refreshAndSync()}
 async function addDocument(){
-  let fileInput=document.getElementById('docFile');
-  let file=fileInput.files[0];
-  let title=val('docTitle')||( file?file.name:'');
+  let fileInput=$('docFile'),file=fileInput.files[0];
   if(!file)return alert('Choose a file first');
   if(file.size>20*1024*1024)return alert('File too large for on-device storage (20MB limit).');
-  let obj={title,tags:val('docTags'),fileName:file.name,fileType:file.type,blob:file,dateAdded:today()};
-  await save('documents',obj);
-  fileInput.value='';document.getElementById('docTitle').value='';document.getElementById('docTags').value='';
-  refreshAndSync() // Documents themselves don't sync (binary), but this keeps other tabs in sync too
+  let title=val('docTitle').trim()||file.name;
+  await save('documents',{title,tags:val('docTags'),fileName:file.name,fileType:file.type,blob:file,dateAdded:today()});
+  fileInput.value='';$('docTitle').value='';$('docTags').value='';
+  await refresh();toast('Document saved')
 }
 function renderDocuments(){
   let rows=state.documents.slice().sort((a,b)=>b.id-a.id);
-  documentList.innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>`:''}<button class="btn danger" onclick="deleteDocument(${x.id})">Delete</button></span></div>`}).join('')||'<p class="muted">📄 No documents yet.</p>'
+  $('documentList').innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener" download="${esc(x.fileName||x.title)}">Open</a>`:''}<button class="btn danger" onclick="del('documents',${x.id},'Document')">Delete</button></span></div>`}).join('')||'<p class="muted">📄 No documents yet.</p>'
 }
 
-
+// ---------- Dashboard ----------
 function render(){
-  let inc=state.income.reduce((a,x)=>a+x.amount,0),exp=state.expense.reduce((a,x)=>a+x.amount,0);
-  dIncome.textContent=money(inc);dExpense.textContent=money(exp);dBalance.textContent=money(inc-exp);
-  renderIncomeList();renderExpenseList();renderDues();renderCards();renderAdvances();renderNotes();renderDocuments();renderDashInsights();report()
+  populateSelects();
+  let period=val('dashPeriod')||'month',ym=thisYM();
+  let inPeriod=x=>period==='all'||x.date.startsWith(ym);
+  let inc=sum(state.income.filter(inPeriod)),exp=sum(state.expense.filter(inPeriod));
+  let monthName=new Date().toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+  $('dIncomeLabel').textContent=period==='all'?'Total Income':'Income';
+  $('dExpenseLabel').textContent=period==='all'?'Total Expense':'Expense';
+  $('dBalanceLabel').textContent=period==='all'?'Balance (all time)':'Saved this month';
+  $('dashPeriodNote').textContent=period==='all'?'Showing all-time totals':'Showing '+monthName;
+  $('dIncome').textContent=money(inc);$('dExpense').textContent=money(exp);$('dBalance').textContent=money(inc-exp);
+  renderIncomeList();renderExpenseList();renderDues();renderCards();renderAdvances();renderNotes();renderDocuments();renderDashInsights();renderDashBudgets();renderPlan(false);refreshBackupBanner();
+  if(!$('reports').classList.contains('hidden'))report()
 }
-function daysInMonth(ym){let[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate()}
-function daysElapsedInMonth(ym){let now=new Date();let curYM=ymOf(now);if(ym===curYM)return now.getDate();if(ym<curYM)return daysInMonth(ym);return 0}
+function daysElapsedInMonth(ym){let curYM=thisYM();if(ym===curYM)return new Date().getDate();if(ym<curYM)return daysInMonth(ym);return 0}
 function renderDashInsights(){
-  let el=document.getElementById('dashInsights');if(!el)return;
-  let now=new Date();let thisYM=ymOf(now);
-  let lastYM=ymOf(new Date(now.getFullYear(),now.getMonth()-1,1));
-  let thisInc=state.income.filter(x=>x.date.startsWith(thisYM)).reduce((a,x)=>a+x.amount,0);
-  let thisExp=state.expense.filter(x=>x.date.startsWith(thisYM)).reduce((a,x)=>a+x.amount,0);
-  let lastExp=state.expense.filter(x=>x.date.startsWith(lastYM)).reduce((a,x)=>a+x.amount,0);
+  let now=new Date(),ym=thisYM(),lastYM=addMonths(ym,-1);
+  let thisInc=sum(state.income.filter(x=>x.date.startsWith(ym)));
+  let thisExp=sum(state.expense.filter(x=>x.date.startsWith(ym)));
+  // compare against the SAME number of days last month, not the whole month
+  let cutoff=lastYM+'-'+pad(Math.min(now.getDate(),daysInMonth(lastYM)));
+  let lastExpSame=sum(state.expense.filter(x=>x.date.startsWith(lastYM)&&x.date<=cutoff));
   let savingsRate=thisInc>0?((thisInc-thisExp)/thisInc*100):0;
-  let spendChange=lastExp>0?((thisExp-lastExp)/lastExp*100):(thisExp>0?100:0);
-  let dEl=now.getDate();
-  let dailyAvg=dEl>0?thisExp/dEl:0;
-  let netAdv=0;for(let a of state.advances)if(a.status==='pending')netAdv+=(a.direction==='given'?a.amount:-a.amount);
-  let totalBalance=state.income.reduce((a,x)=>a+x.amount,0)-state.expense.reduce((a,x)=>a+x.amount,0);
-  el.innerHTML=`
+  let spendChange=lastExpSame>0?((thisExp-lastExpSame)/lastExpSame*100):null;
+  let dailyAvg=thisExp/now.getDate();
+  let netAdv=0;for(let a of state.advances)if(a.status==='pending')netAdv+=(a.direction==='given'?1:-1)*advanceRemaining(a);
+  let totalBalance=sum(state.income)-sum(state.expense);
+  let delta=spendChange==null?'':`<span class="delta ${spendChange<=0?'up':'down'}">${spendChange>0?'▲':spendChange<0?'▼':'='} ${Math.abs(spendChange).toFixed(0)}%</span>`;
+  $('dashInsights').innerHTML=`
     <div class="insight"><small>Savings rate (this month)</small><b class="${savingsRate>=0?'income':'expense'}">${savingsRate.toFixed(0)}%</b></div>
-    <div class="insight"><small>Spend vs last month</small><b>${money(thisExp)}</b><span class="delta ${spendChange<=0?'up':'down'}">${spendChange>=0?'▲':'▼'} ${Math.abs(spendChange).toFixed(0)}%</span></div>
+    <div class="insight"><small>Spend vs same days last month</small><b>${money(thisExp)}</b>${delta}</div>
     <div class="insight"><small>Daily avg spend</small><b>${money(dailyAvg)}</b></div>
-    <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>
-  `
+    <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>`
 }
-function show(id,btn){document.querySelectorAll('main>section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');if(id==='reports')report()}
+function show(id){
+  document.querySelectorAll('main>section').forEach(x=>x.classList.toggle('hidden',x.id!==id));
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
+  if(id==='reports')report();
+  if(id==='plan')renderPlan(true)
+}
 
 // ---------- Reports + charts ----------
-function lastNMonths(n){let out=[];let now=new Date();for(let i=n-1;i>=0;i--){let dt=new Date(now.getFullYear(),now.getMonth()-i,1);out.push(ymOf(dt))}return out}
+function lastNMonths(n){let out=[];for(let i=n-1;i>=0;i--)out.push(addMonths(thisYM(),-i));return out}
 function report(){
-  let m=val('month')||today().slice(0,7);
-  let inc=state.income.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
-  let exp=state.expense.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
-  reportBox.innerHTML=`<div><small>Income</small><br><b class="income">${money(inc)}</b></div><div><small>Expense</small><br><b class="expense">${money(exp)}</b></div><div><small>Balance</small><br><b class="balance">${money(inc-exp)}</b></div>`;
-  let cats={};state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>cats[x.cat]=(cats[x.cat]||0)+x.amount);
-  catBox.innerHTML='<h3>Expense by Category</h3>'+(Object.entries(cats).map(([k,v])=>`<div class="row"><b>${esc(k)}</b><span>${money(v)}</span></div>`).join('')||'<p class="muted">No expenses for this month.</p>');
+  let m=val('month')||thisYM();
+  let inc=sum(state.income.filter(x=>x.date.startsWith(m))),exp=sum(state.expense.filter(x=>x.date.startsWith(m)));
+  $('reportBox').innerHTML=`<div><small>Income</small><br><b class="income">${money(inc)}</b></div><div><small>Expense</small><br><b class="expense">${money(exp)}</b></div><div><small>Balance</small><br><b class="balance">${money(inc-exp)}</b></div>`;
+  let cats={};state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>cats[x.cat||'Others']=(cats[x.cat||'Others']||0)+x.amount);
+  $('catBox').innerHTML='<h3>Expense by Category</h3>'+(Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{let lim=+meta.budgets[k]||0;return `<div class="row" style="grid-template-columns:1fr 1fr 1fr"><b>${esc(k)}</b><span>${money(v)}</span><span class="muted">${lim?`budget ${money(lim)} · ${Math.round(v/lim*100)}%`:''}</span></div>`}).join('')||'<p class="muted">No expenses for this month.</p>');
   renderReportInsights(m,inc,exp,cats);
-  drawCategoryChart(cats);
-  drawTrendChart();
-  drawSavingsChart()
+  drawCategoryChart(cats);drawTrendChart();drawSavingsChart()
 }
 function csvEscape(v){let s=String(v??'');return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function downloadBlob(blob,name){let url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000)}
 function exportReportCSV(){
-  let m=val('month')||today().slice(0,7);
-  let rows=[];
-  state.income.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push({date:x.date,type:'Income',cat:x.cat||x.source||'',amount:x.amount,detail:x.note||''}));
-  state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push({date:x.date,type:'Expense',cat:x.cat||'',amount:x.amount,detail:[x.method,x.note].filter(Boolean).join(' - ')}));
-  rows.sort((a,b)=>a.date.localeCompare(b.date));
-  let header=['Date','Type','Category','Amount','Details'];
-  let lines=[header,...rows.map(r=>[r.date,r.type,r.cat,r.amount,r.detail])].map(r=>r.map(csvEscape).join(',')).join('\r\n');
-  let blob=new Blob([lines],{type:'text/csv;charset=utf-8'});
-  let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='daily-tracker-report-'+m+'.csv';a.click()
+  let m=val('month')||thisYM(),rows=[];
+  state.income.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push([x.date,'Income',x.cat||x.source||'',x.amount,accountName(x.account),x.note||'']));
+  state.expense.filter(x=>x.date.startsWith(m)).forEach(x=>rows.push([x.date,'Expense',x.cat||'',x.amount,x.cardId?cardName(x.cardId):accountName(x.account),[x.method,x.note].filter(Boolean).join(' - ')]));
+  rows.sort((a,b)=>a[0].localeCompare(b[0]));
+  let lines=[['Date','Type','Category','Amount','Account/Card','Details'],...rows].map(r=>r.map(csvEscape).join(',')).join('\r\n');
+  downloadBlob(new Blob([lines],{type:'text/csv;charset=utf-8'}),'daily-tracker-report-'+m+'.csv')
 }
-function exportReportPDF(){window.print()} // print CSS shows only the Reports section — use the browser's own "Save as PDF"
+function exportReportPDF(){window.print()}
 function renderReportInsights(m,inc,exp,cats){
-  let el=document.getElementById('reportInsights');if(!el)return;
   let savingsRate=inc>0?((inc-exp)/inc*100):0;
-  let entries=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
-  let top=entries[0];
-  let elapsed=daysElapsedInMonth(m);
-  let dailyAvg=elapsed>0?exp/elapsed:0;
-  let isCurrentMonth=m===today().slice(0,7);
-  let projected=isCurrentMonth?dailyAvg*daysInMonth(m):exp;
-  el.innerHTML=`
+  let top=Object.entries(cats).sort((a,b)=>b[1]-a[1])[0];
+  let elapsed=daysElapsedInMonth(m),dailyAvg=elapsed>0?exp/elapsed:0,isCurrent=m===thisYM();
+  let projected=isCurrent?dailyAvg*daysInMonth(m):exp;
+  $('reportInsights').innerHTML=`
     <div class="insight"><small>Savings rate</small><b class="${savingsRate>=0?'income':'expense'}">${savingsRate.toFixed(0)}%</b></div>
     <div class="insight"><small>Top category</small><b>${top?esc(top[0]):'—'}</b>${top?`<span class="delta muted">${money(top[1])}</span>`:''}</div>
     <div class="insight"><small>Daily avg spend</small><b>${money(dailyAvg)}</b></div>
-    <div class="insight"><small>${isCurrentMonth?'Projected month-end spend':'Total spend'}</small><b>${money(projected)}</b></div>
-  `
+    <div class="insight"><small>${isCurrent?'Projected month-end spend':'Total spend'}</small><b>${money(projected)}</b></div>`
 }
 function setupCanvas(canvas){let ratio=window.devicePixelRatio||1;let w=canvas.clientWidth||600,h=canvas.clientHeight||220;canvas.width=w*ratio;canvas.height=h*ratio;let ctx=canvas.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);return{ctx,w,h}}
 function drawCategoryChart(cats){
-  let canvas=document.getElementById('catChart');if(!canvas)return;
+  let canvas=$('catChart');if(!canvas)return;
   let entries=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
-  let {ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
+  let{ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
   if(!entries.length){ctx.fillStyle='#667085';ctx.font='13px Arial';ctx.fillText('No expenses this month',10,h/2);return}
   let max=Math.max(...entries.map(e=>e[1]))*1.15;
-  let padL=40,padB=34,padT=10,padR=10;let chartW=w-padL-padR,chartH=h-padT-padB;
-  let gap=chartW/entries.length,barW=gap*0.6;
+  let padL=40,padB=34,padT=10,padR=10,chartW=w-padL-padR,chartH=h-padT-padB,gap=chartW/entries.length,barW=gap*0.6;
   ctx.strokeStyle='#d5dbea';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+chartH);ctx.lineTo(padL+chartW,padT+chartH);ctx.stroke();
-  entries.forEach(([label,v],i)=>{
-    let x=padL+i*gap+(gap-barW)/2,barH=chartH*(v/max);
-    ctx.fillStyle='#dc2626';ctx.fillRect(x,padT+chartH-barH,barW,barH);
-    ctx.fillStyle='#172033';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(String(label).slice(0,10),x+barW/2,padT+chartH+14)
-  });
+  entries.forEach(([label,v],i)=>{let x=padL+i*gap+(gap-barW)/2,barH=chartH*(v/max);ctx.fillStyle='#dc2626';ctx.fillRect(x,padT+chartH-barH,barW,barH);ctx.fillStyle='#667085';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(String(label).slice(0,10),x+barW/2,padT+chartH+14)});
   ctx.fillStyle='#667085';ctx.textAlign='right';ctx.fillText(Math.round(max),padL-6,padT+10);ctx.fillText('0',padL-6,padT+chartH)
 }
 function drawTrendChart(){
-  let canvas=document.getElementById('trendChart');if(!canvas)return;
+  let canvas=$('trendChart');if(!canvas)return;
   let months=lastNMonths(6);
-  let incVals=months.map(m=>state.income.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0));
-  let expVals=months.map(m=>state.expense.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0));
-  let {ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
-  let max=Math.max(...incVals,...expVals,1)*1.15;
-  let padL=45,padB=30,padT=18,padR=10;let chartW=w-padL-padR,chartH=h-padT-padB;
-  let n=months.length,gap=chartW/n,barW=gap*0.32;
+  let incVals=months.map(m=>sum(state.income.filter(x=>x.date.startsWith(m)))),expVals=months.map(m=>sum(state.expense.filter(x=>x.date.startsWith(m))));
+  let{ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
+  let max=Math.max(...incVals,...expVals,1)*1.15,padL=45,padB=30,padT=18,padR=10,chartW=w-padL-padR,chartH=h-padT-padB,n=months.length,gap=chartW/n,barW=gap*0.32;
   ctx.strokeStyle='#d5dbea';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+chartH);ctx.lineTo(padL+chartW,padT+chartH);ctx.stroke();
-  months.forEach((mo,i)=>{
-    let xBase=padL+i*gap+gap*0.18;
-    let hA=chartH*(incVals[i]/max),hB=chartH*(expVals[i]/max);
-    ctx.fillStyle='#15803d';ctx.fillRect(xBase,padT+chartH-hA,barW,hA);
-    ctx.fillStyle='#dc2626';ctx.fillRect(xBase+barW+4,padT+chartH-hB,barW,hB);
-    ctx.fillStyle='#172033';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(mo.slice(5)+'/'+mo.slice(2,4),xBase+barW+2,padT+chartH+14)
-  });
+  months.forEach((mo,i)=>{let xBase=padL+i*gap+gap*0.18,hA=chartH*(incVals[i]/max),hB=chartH*(expVals[i]/max);ctx.fillStyle='#15803d';ctx.fillRect(xBase,padT+chartH-hA,barW,hA);ctx.fillStyle='#dc2626';ctx.fillRect(xBase+barW+4,padT+chartH-hB,barW,hB);ctx.fillStyle='#667085';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(mo.slice(5)+'/'+mo.slice(2,4),xBase+barW+2,padT+chartH+14)});
   ctx.fillStyle='#667085';ctx.textAlign='right';ctx.fillText(Math.round(max),padL-6,padT+10);ctx.fillText('0',padL-6,padT+chartH);
-  ctx.textAlign='left';ctx.fillStyle='#15803d';ctx.fillRect(padL,0,10,10);ctx.fillStyle='#172033';ctx.font='11px Arial';ctx.fillText('Income',padL+14,9);
-  ctx.fillStyle='#dc2626';ctx.fillRect(padL+80,0,10,10);ctx.fillStyle='#172033';ctx.fillText('Expense',padL+94,9)
+  ctx.textAlign='left';ctx.fillStyle='#15803d';ctx.fillRect(padL,0,10,10);ctx.fillStyle='#667085';ctx.font='11px Arial';ctx.fillText('Income',padL+14,9);
+  ctx.fillStyle='#dc2626';ctx.fillRect(padL+80,0,10,10);ctx.fillStyle='#667085';ctx.fillText('Expense',padL+94,9)
 }
 function drawSavingsChart(){
-  let canvas=document.getElementById('savingsChart');if(!canvas)return;
+  let canvas=$('savingsChart');if(!canvas)return;
   let months=lastNMonths(6);
-  let rates=months.map(m=>{
-    let inc=state.income.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
-    let exp=state.expense.filter(x=>x.date.startsWith(m)).reduce((a,x)=>a+x.amount,0);
-    return inc>0?((inc-exp)/inc*100):0
-  });
-  let {ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
-  let maxV=Math.max(...rates,0)*1.15||10;
-  let minV=Math.min(...rates,0)*1.15;
-  let padL=45,padB=30,padT=15,padR=14;let chartW=w-padL-padR,chartH=h-padT-padB;
-  let range=(maxV-minV)||1;
-  let n=months.length,gap=chartW/Math.max(n-1,1);
-  let yFor=v=>padT+chartH-((v-minV)/range)*chartH;
-  let zeroY=yFor(0);
+  let rates=months.map(m=>{let inc=sum(state.income.filter(x=>x.date.startsWith(m))),exp=sum(state.expense.filter(x=>x.date.startsWith(m)));return inc>0?((inc-exp)/inc*100):0});
+  let{ctx,w,h}=setupCanvas(canvas);ctx.clearRect(0,0,w,h);
+  let maxV=Math.max(...rates,0)*1.15||10,minV=Math.min(...rates,0)*1.15;
+  let padL=45,padB=30,padT=15,padR=14,chartW=w-padL-padR,chartH=h-padT-padB,range=(maxV-minV)||1,n=months.length,gap=chartW/Math.max(n-1,1);
+  let yFor=v=>padT+chartH-((v-minV)/range)*chartH,zeroY=yFor(0);
   ctx.strokeStyle='#d5dbea';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+chartH);ctx.lineTo(padL+chartW,padT+chartH);ctx.stroke();
   if(minV<0){ctx.strokeStyle='#e2e8f0';ctx.beginPath();ctx.moveTo(padL,zeroY);ctx.lineTo(padL+chartW,zeroY);ctx.stroke()}
-  ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.beginPath();
-  months.forEach((mo,i)=>{let x=padL+i*gap,y=yFor(rates[i]);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});
-  ctx.stroke();ctx.lineWidth=1;
-  months.forEach((mo,i)=>{
-    let x=padL+i*gap,y=yFor(rates[i]);
-    ctx.fillStyle=rates[i]>=0?'#15803d':'#dc2626';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#172033';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(mo.slice(5)+'/'+mo.slice(2,4),x,padT+chartH+14)
-  });
+  ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.beginPath();months.forEach((mo,i)=>{let x=padL+i*gap,y=yFor(rates[i]);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.lineWidth=1;
+  months.forEach((mo,i)=>{let x=padL+i*gap,y=yFor(rates[i]);ctx.fillStyle=rates[i]>=0?'#15803d':'#dc2626';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#667085';ctx.textAlign='center';ctx.font='11px Arial';ctx.fillText(mo.slice(5)+'/'+mo.slice(2,4),x,padT+chartH+14)});
   ctx.fillStyle='#667085';ctx.textAlign='right';ctx.fillText(Math.round(maxV)+'%',padL-6,padT+10);ctx.fillText(Math.round(minV)+'%',padL-6,padT+chartH)
 }
+let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(!$('reports').classList.contains('hidden'))report()},200)});
 
 // ---------- Notifications ----------
 function notifStatusText(){if(!('Notification'in window))return'Not supported in this browser';return{granted:'Enabled',denied:'Blocked — allow notifications for this app in your browser/OS settings',default:'Not enabled yet'}[Notification.permission]}
-function refreshNotifStatus(){let el=document.getElementById('notifStatus');if(el)el.textContent='Status: '+notifStatusText()}
+function refreshNotifStatus(){$('notifStatus').textContent='Status: '+notifStatusText()}
 async function enableNotifications(){
   if(!('Notification'in window))return alert('Notifications are not supported in this browser.');
   let perm=await Notification.requestPermission();refreshNotifStatus();
-  if(perm==='granted'){checkDueNotifications();tryPeriodicSync()}
-  else if(perm==='denied')alert('Notifications are blocked. Enable them from your browser or system app settings to get due reminders.')
+  if(perm==='granted'){checkDueNotifications();tryPeriodicSync();toast('Reminders enabled')}
+  else if(perm==='denied')alert('Notifications are blocked. Enable them from your browser or system app settings to get reminders.')
 }
-const REMINDER_LEAD_DAYS=10; // start nudging this many days before something's due, not just on the day
+function loadNotified(){try{return JSON.parse(localStorage.getItem('notifiedDues')||'{}')}catch(e){return{}}}
+function saveNotified(n){
+  let cutoff=ymd(new Date(Date.now()-40*86400000));
+  for(let k of Object.keys(n))if(n[k]<cutoff)delete n[k]; // don't grow forever
+  try{localStorage.setItem('notifiedDues',JSON.stringify(n))}catch(e){}
+}
 async function checkDueNotifications(){
   if(!('Notification'in window)||Notification.permission!=='granted'||!('serviceWorker'in navigator))return;
-  let reg=await navigator.serviceWorker.ready;let ym=today().slice(0,7);let todayDay=new Date().getDate();let todayStr=today();
-  let notified=JSON.parse(localStorage.getItem('notifiedDues')||'{}');
-  for(let x of state.dues){
-    for(let d of (x.days||[])){
-      let dateStr=ym+'-'+pad(d);let key='due-'+x.id+'-'+dateStr;
-      if((d-todayDay)<=REMINDER_LEAD_DAYS&&!(x.paidDates||[]).includes(dateStr)&&notified[key]!==todayStr){
-        reg.showNotification('Due reminder: '+x.name,{body:money(x.amount)+' — due on day '+d+' this month.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
-        notified[key]=todayStr
-      }
-    }
+  let reg=await navigator.serviceWorker.ready,todayStr=today(),notified=loadNotified();
+  for(let o of pendingDueOccurrences()){
+    let diff=daysFromToday(o.dateStr);if(diff>REMINDER_LEAD_DAYS)continue;
+    let key='due-'+o.due.id+'-'+o.dateStr;
+    if(notified[key]===todayStr)continue;
+    reg.showNotification((diff<0?'Overdue: ':'Due reminder: ')+o.due.name,{body:money(o.due.amount)+' — '+(diff<0?'was ':'')+'due '+formatDueDate(o.dateStr)+'.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
+    notified[key]=todayStr
   }
   for(let x of state.creditcards){
-    let remaining=cardRemaining(x);
-    if(remaining<=0)continue;
-    let daysUntil=cardDaysUntilDue(x);
-    let dueDateStr=ymd(cardDueDate(x));
-    let key='card-'+x.id+'-'+dueDateStr;
+    let remaining=cardOutstanding(x);if(remaining<=0)continue;
+    let daysUntil=cardDaysUntilDue(x),dueDateStr=ymd(cardDueDate(x)),key='card-'+x.id+'-'+dueDateStr;
     if(daysUntil<=REMINDER_LEAD_DAYS&&notified[key]!==todayStr){
       reg.showNotification('Card payment due: '+x.cardName,{body:money(remaining)+' — due '+formatDueDate(dueDateStr)+'.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
       notified[key]=todayStr
     }
   }
-  localStorage.setItem('notifiedDues',JSON.stringify(notified))
+  saveNotified(notified)
 }
-async function requestPersistence(){
-  if(!(navigator.storage&&navigator.storage.persist))return;
-  let already=await navigator.storage.persisted();
-  if(!already)await navigator.storage.persist();
-  refreshPersistStatus()
-}
+async function requestPersistence(){if(!(navigator.storage&&navigator.storage.persist))return;if(!await navigator.storage.persisted())await navigator.storage.persist();refreshPersistStatus()}
 async function refreshPersistStatus(){
-  let el=document.getElementById('persistStatus');if(!el)return;
+  let el=$('persistStatus');
   if(!(navigator.storage&&navigator.storage.persisted)){el.textContent='Storage protection: not supported in this browser';return}
-  let persisted=await navigator.storage.persisted();
-  el.textContent='Storage protection: '+(persisted?'On — the browser won\'t auto-clear this data under storage pressure':'Off — ask the browser to protect this data')
-}
-function backupIsOverdue(){
-  let last=localStorage.getItem('lastBackup');
-  if(!last)return true;
-  let days=Math.floor((Date.now()-new Date(last).getTime())/86400000);
-  return days>=7
-}
-async function autoBackupIfDue(){
-  if(!backupIsOverdue())return;
-  try{await exportData()}catch(e){} // browser may block a download with no user click yet — banner still shows as a fallback
+  el.textContent='Storage protection: '+(await navigator.storage.persisted()?'On — the browser won\'t auto-clear this data under storage pressure':'Off — ask the browser to protect this data')
 }
 function refreshBackupBanner(){
   let last=localStorage.getItem('lastBackup');
   let days=last?Math.floor((Date.now()-new Date(last).getTime())/86400000):null;
-  let banner=document.getElementById('backupBanner');if(!banner)return;
-  let lastText=document.getElementById('lastBackupText');
-  if(lastText)lastText.textContent=last?('Last backup: '+days+(days===1?' day':' days')+' ago'):'You have never exported a backup';
-  banner.classList.toggle('hidden',!(last===null||days>=7))
+  $('lastBackupText').textContent=last?('Last backup: '+days+(days===1?' day':' days')+' ago'):'You have never exported a backup';
+  $('backupBanner').classList.toggle('hidden',!(last===null||days>=7))
 }
 async function tryPeriodicSync(){
   try{
     let reg=await navigator.serviceWorker.ready;
-    if('periodicSync'in reg){
-      let status=await navigator.permissions.query({name:'periodic-background-sync'});
-      if(status.state==='granted')await reg.periodicSync.register('check-dues',{minInterval:12*60*60*1000})
-    }
+    if('periodicSync'in reg){let status=await navigator.permissions.query({name:'periodic-background-sync'});if(status.state==='granted')await reg.periodicSync.register('check-dues',{minInterval:12*60*60*1000})}
   }catch(e){}
 }
+
+// ---------- App lock (PIN) ----------
+async function sha256(s){let b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+function getPin(){try{return JSON.parse(localStorage.getItem('dtPin')||'null')}catch(e){return null}}
+async function verifyPin(p){let s=getPin();if(!s)return true;return await sha256(s.salt+p)===s.hash}
+function refreshPinUI(){let on=!!getPin();$('pinStatus').textContent='PIN: '+(on?'On':'Off');$('pinSetBtn').textContent=on?'Change PIN':'Set PIN';$('pinRemoveBtn').classList.toggle('hidden',!on)}
+async function setPin(){
+  if(!(window.crypto&&crypto.subtle))return alert('App lock needs the app to be opened over https.');
+  let fields=[{name:'p1',label:'New PIN (4–8 digits)',type:'password',inputmode:'numeric'},{name:'p2',label:'Confirm new PIN',type:'password',inputmode:'numeric'}];
+  if(getPin())fields.unshift({name:'old',label:'Current PIN',type:'password',inputmode:'numeric'});
+  let r=await modal({title:getPin()?'Change PIN':'Set app PIN',fields,okText:'Save PIN'});if(!r)return;
+  if(getPin()&&!await verifyPin(r.old))return alert('Current PIN is wrong.');
+  if(!/^\d{4,8}$/.test(r.p1))return alert('PIN must be 4 to 8 digits.');
+  if(r.p1!==r.p2)return alert('The two PINs don\'t match.');
+  let salt=uid();localStorage.setItem('dtPin',JSON.stringify({salt,hash:await sha256(salt+r.p1)}));
+  refreshPinUI();toast('PIN saved — the app will ask for it on open')
+}
+async function removePin(){
+  let r=await modal({title:'Remove PIN',fields:[{name:'old',label:'Current PIN',type:'password',inputmode:'numeric'}],okText:'Remove',danger:true});if(!r)return;
+  if(!await verifyPin(r.old))return alert('Wrong PIN.');
+  localStorage.removeItem('dtPin');refreshPinUI();toast('PIN removed')
+}
+let lockFails=0,hiddenAt=0;
+function lockApp(){if(!getPin())return;$('lock').classList.remove('hidden');$('lockPin').value='';$('lockMsg').textContent='';setTimeout(()=>$('lockPin').focus(),50)}
+async function unlock(){
+  let inp=$('lockPin');
+  if(await verifyPin(inp.value)){$('lock').classList.add('hidden');lockFails=0;inp.value='';return}
+  lockFails++;inp.value='';
+  if(lockFails>=5){inp.disabled=true;$('lockMsg').textContent='Too many attempts — wait 30 seconds';setTimeout(()=>{inp.disabled=false;lockFails=0;$('lockMsg').textContent='';inp.focus()},30000)}
+  else $('lockMsg').textContent='Wrong PIN'
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)hiddenAt=Date.now();
+  else if(hiddenAt&&Date.now()-hiddenAt>60000)lockApp()
+});
+lockApp(); // before any data is rendered
 
 // ---------- Backup ----------
 function blobToBase64(blob){return new Promise((res,rej)=>{if(!(blob instanceof Blob))return res(null);let r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
 function base64ToBlob(dataUrl){return fetch(dataUrl).then(r=>r.blob())}
 async function exportData(){
-  let exportState={...state};
-  exportState.documents=await Promise.all(state.documents.map(async d=>{
-    try{return {...d,blob:d.blob?await blobToBase64(d.blob):null}}
-    catch(e){return {...d,blob:null}} // skip a corrupt/unreadable file rather than failing the whole backup
-  }));
-  let out=JSON.stringify(exportState,null,2),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([out],{type:'application/json'}));a.download='daily-tracker-backup-'+today()+'.json';a.click();localStorage.setItem('lastBackup',new Date().toISOString());refreshBackupBanner()
+  let exportState={...state,meta,exportedAt:new Date().toISOString(),backupVersion:2};
+  exportState.documents=await Promise.all(state.documents.map(async d=>{try{return{...d,blob:d.blob?await blobToBase64(d.blob):null}}catch(e){return{...d,blob:null}}}));
+  downloadBlob(new Blob([JSON.stringify(exportState)],{type:'application/json'}),'daily-tracker-backup-'+today()+'.json');
+  localStorage.setItem('lastBackup',new Date().toISOString());refreshBackupBanner();toast('Backup downloaded')
 }
 async function importData(e){
-  let f=e.target.files[0];if(!f)return;let data=JSON.parse(await f.text());if(!data.income||!data.expense||!data.dues)return alert('Invalid backup');
-  revokeAllDocumentUrls();
-  await clearStores();
+  let input=e.target,f=input.files[0];input.value=''; // allow picking the same file again later
+  if(!f)return;
+  let data;try{data=JSON.parse(await f.text())}catch(err){return alert('That file isn\'t a valid backup (could not read JSON).')}
+  if(!data||!Array.isArray(data.income)||!Array.isArray(data.expense)||!Array.isArray(data.dues))return alert('Invalid backup');
+  if(!await confirmModal('Replace ALL data on this device with this backup?','Restore',true))return;
+  // prepare documents first so a bad file can't leave you half-restored
+  let docs=[];for(let x of (data.documents||[])){let y={...x};try{if(y.blob)y.blob=await base64ToBlob(y.blob)}catch(err){y.blob=null}docs.push(y)}
+  revokeAllDocumentUrls();await clearStores();
   for(let k of Object.keys(state)){
-    for(let x of (data[k]||[])){
-      let y={...x};delete y.id;
-      if(k==='documents'&&y.blob)y.blob=await base64ToBlob(y.blob);
-      await put_raw(k,y)
+    for(let x of (k==='documents'?docs:(data[k]||[]))){
+      // keep original ids so links (due→expense, expense→card) stay intact
+      let y={...x};if(y.id==null||typeof y.id!=='number')delete y.id;
+      await putExact(k,y)
     }
   }
-  refresh();alert('Backup restored')
+  if(data.meta){meta=mergeMeta(data.meta);saveMeta(false)}
+  await refresh();toast('Backup restored')
 }
-function put_raw(store,obj){return new Promise((res,rej)=>{let r=db.transaction(store,'readwrite').objectStore(store).add(obj);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
-function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r()})))}
-async function clearAll(){if(confirm('Delete all finance data from this device?')){revokeAllDocumentUrls();await clearStores();refresh()}}
+function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r();q.onerror=()=>r()})))}
+async function clearAll(){if(await confirmModal('Delete all finance data from this device?','Delete everything',true)){revokeAllDocumentUrls();await clearStores();refresh()}}
 
-let installEvent; window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert('On Chrome Android, use the browser menu → Add to Home screen.')}
+let installEvent;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});
+async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert(/iphone|ipad/i.test(navigator.userAgent)?'In Safari, tap Share → Add to Home Screen.':'Use your browser menu → Install app / Add to Home screen.')}
 
-(async()=>{
-  await openDB();
-  document.getElementById('iDate').value=today();document.getElementById('eDate').value=today();document.getElementById('month').value=today().slice(0,7);
-  await refresh();refreshNotifStatus();requestPersistence();refreshBackupBanner();refreshSyncUI();autoBackupIfDue();
-  if('serviceWorker'in navigator){await navigator.serviceWorker.register('sw.js');if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}}
-  if(navigator.onLine)syncNow(); // auto-sync in the background on load; safe to skip silently if offline
-})()
-
+// ---------- App updates ----------
+let updatingApp=false,swReg=null;
+function showUpdateBar(){$('updateBar').classList.remove('hidden')}
+function applyUpdate(){updatingApp=true;if(swReg&&swReg.waiting)swReg.waiting.postMessage({type:'SKIP_WAITING'});else location.reload()}
+async function setupServiceWorker(){
+  if(!('serviceWorker'in navigator))return;
+  try{
+    swReg=await navigator.serviceWorker.register('sw.js');
+    if(swReg.waiting&&navigator.serviceWorker.controller)showUpdateBar();
+    swReg.addEventListener('updatefound',()=>{let nw=swReg.installing;if(!nw)return;nw.addEventListener('statechange',()=>{if(nw.state==='installed'&&navigator.serviceWorker.controller)showUpdateBar()})});
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(updatingApp)location.reload()});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)swReg.update().catch(()=>{})});
+    if('Notification'in window&&Notification.permission==='granted'){checkDueNotifications();tryPeriodicSync()}
+  }catch(e){}
+}
 
 // ========== Google Sheets two-way sync (via Apps Script Web App) ==========
-// No OAuth, no sign-in, no consent screen — just a URL + a shared secret you set yourself.
-// Built-in defaults — set once, syncs immediately on every device without
-// needing to paste anything in Settings. Anyone who views this public
-// repo's source can see these, so treat this URL+token as a shared password
-// for this Google Sheet, not a private secret.
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbyZwnxmg4AYQpC8Hu9Ln1mO_x_0JFus4CARV9Pn5u9OLcjeKBhM00grHAp_1Qd8FeEC5A/exec';
 const DEFAULT_SYNC_TOKEN='dt-b574d5d72a89ae2b';
 function getScriptUrl(){return localStorage.getItem('gsScriptUrl')||DEFAULT_SCRIPT_URL}
 function setScriptUrl(v){localStorage.setItem('gsScriptUrl',v)}
 function getSyncToken(){return localStorage.getItem('gsSyncToken')||DEFAULT_SYNC_TOKEN}
 function setSyncToken(v){localStorage.setItem('gsSyncToken',v)}
-function updateSyncStatus(msg){let el=document.getElementById('syncStatus');if(el)el.textContent=msg}
-
+function updateSyncStatus(msg){$('syncStatus').textContent=msg}
 function saveScriptConfig(){
-  let url=val('gsScriptUrlInput').trim();
-  let token=val('gsSyncTokenInput').trim();
+  let url=val('gsScriptUrlInput').trim(),token=val('gsSyncTokenInput').trim();
   if(!url)return alert('Paste your Apps Script Web App URL first.');
   if(!token)return alert('Set a secret token (any word/phrase — must match what you put in the script).');
-  setScriptUrl(url);setSyncToken(token);
-  updateSyncStatus('Saved. Tap "Sync Now" whenever you want to sync.')
+  setScriptUrl(url);setSyncToken(token);updateSyncStatus('Saved. Tap "Sync Now" whenever you want to sync.')
 }
-
+// Column layout per Sheet tab. New columns are only ever appended at the end,
+// so older rows still read correctly.
 const SHEET_TABS={
-  Income:['id','date','amount','cat','note','updatedAt'],
-  Expense:['id','date','amount','cat','method','note','updatedAt'],
-  Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt','paymentDates'],
-  CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt','billingDay','payments','cycleDays'],
-  Advances:['id','person','amount','direction','status','dueDate','note','updatedAt','settledDate','payments'],
+  Income:['id','date','amount','cat','note','updatedAt','account','recurKey','createdAt'],
+  Expense:['id','date','amount','cat','method','note','updatedAt','account','cardId','recurKey','createdAt'],
+  Dues:['id','name','amount','days','paidDates','linkedExpenses','updatedAt','paymentDates','frequency','startYM'],
+  CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt','billingDay','payments','cycleDays','statementDate','statementAt','pastPayments'],
+  Advances:['id','person','amount','direction','status','dueDate','note','updatedAt','settledDate','payments','phone'],
   Notes:['id','title','content','date','updatedAt'],
-  Tombstones:['id','store','recordId','deletedAt']
+  Tombstones:['id','store','recordId','deletedAt'],
+  Meta:['key','json','updatedAt']
 };
-
+const J=(v,d)=>{try{return v?JSON.parse(v):d}catch(e){return d}};
+const splitList=v=>String(v||'').split(',').map(s=>s.trim()).filter(Boolean).map(normDate);
+function rowId(v){if(v===''||v==null)return undefined;let n=+v;return isNaN(n)?undefined:n}
+// A missing updatedAt now counts as "oldest", so a half-filled Sheet row never overwrites your local edits.
+const TS=v=>+v||0;
 function rowsToObjects(tab,rows){
   return (rows||[]).map(r=>{
-    if(tab==='Income')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:r[5]?+r[5]:Date.now()};
-    if(tab==='Expense')return{id:r[0]?+r[0]:undefined,date:r[1]||today(),amount:+r[2]||0,cat:r[3]||'Others',method:r[4]||'',note:r[5]||'',updatedAt:r[6]?+r[6]:Date.now()};
-    if(tab==='Dues')return{id:r[0]?+r[0]:undefined,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:String(r[4]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[5]||'{}')}catch(e){return{}}})(),updatedAt:r[6]?+r[6]:Date.now(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})()};
-    if(tab==='CreditCards')return{id:r[0]?+r[0]:undefined,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:String(r[5]||'').split(',').map(s=>s.trim()).filter(Boolean),linkedExpenses:(()=>{try{return JSON.parse(r[6]||'{}')}catch(e){return{}}})(),paymentDates:(()=>{try{return JSON.parse(r[7]||'{}')}catch(e){return{}}})(),updatedAt:r[8]?+r[8]:Date.now(),billingDay:r[9]?+r[9]:null,payments:(()=>{try{return JSON.parse(r[10]||'[]')}catch(e){return[]}})(),cycleDays:r[11]?+r[11]:null};
-    if(tab==='Advances')return{id:r[0]?+r[0]:undefined,person:r[1]||'',amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:r[5]||'',note:r[6]||'',updatedAt:r[7]?+r[7]:Date.now(),settledDate:r[8]||undefined,payments:(()=>{try{return JSON.parse(r[9]||'[]')}catch(e){return[]}})()};
-    if(tab==='Tombstones')return{id:r[0]||'',store:r[1]||'',recordId:r[2]?+r[2]:undefined,deletedAt:r[3]?+r[3]:0};
-    return{id:r[0]?+r[0]:undefined,title:r[1]||'Untitled',content:r[2]||'',date:r[3]||today(),updatedAt:r[4]?+r[4]:Date.now()}
+    let id=rowId(r[0]);
+    if(tab==='Income')return{id,date:normDate(r[1])||today(),amount:+r[2]||0,cat:r[3]||'Other',note:r[4]||'',updatedAt:TS(r[5]),account:r[6]||'',recurKey:r[7]||'',createdAt:TS(r[8])};
+    if(tab==='Expense')return{id,date:normDate(r[1])||today(),amount:+r[2]||0,cat:r[3]||'Others',method:r[4]||'',note:r[5]||'',updatedAt:TS(r[6]),account:r[7]||'',cardId:rowId(r[8])??null,recurKey:r[9]||'',createdAt:TS(r[10])};
+    if(tab==='Dues')return{id,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:splitList(r[4]),linkedExpenses:J(r[5],{}),updatedAt:TS(r[6]),paymentDates:J(r[7],{}),frequency:FREQ_INTERVAL[r[8]]?r[8]:'monthly',startYM:normYM(r[9])||undefined};
+    if(tab==='CreditCards')return{id,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:splitList(r[5]),linkedExpenses:J(r[6],{}),paymentDates:J(r[7],{}),updatedAt:TS(r[8]),billingDay:r[9]?+r[9]:null,payments:J(r[10],[]),cycleDays:r[11]?+r[11]:null,statementDate:normDate(r[12])||undefined,statementAt:TS(r[13]),pastPayments:J(r[14],[])};
+    if(tab==='Advances')return{id,person:String(r[1]||''),amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:normDate(r[5]),note:r[6]||'',updatedAt:TS(r[7]),settledDate:normDate(r[8])||undefined,payments:J(r[9],[]),phone:String(r[10]||'')};
+    if(tab==='Tombstones')return{id:String(r[0]||''),store:r[1]||'',recordId:rowId(r[2]),deletedAt:TS(r[3])};
+    return{id,title:r[1]||'Untitled',content:r[2]||'',date:normDate(r[3])||today(),updatedAt:TS(r[4])}
   })
 }
 function objectToRow(tab,x){
-  if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||Date.now()];
-  if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||Date.now()];
-  if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||Date.now(),JSON.stringify(x.paymentDates||{})];
-  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||Date.now(),x.billingDay||'',JSON.stringify(x.payments||[]),x.cycleDays||''];
-  if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||Date.now(),x.settledDate||'',JSON.stringify(x.payments||[])];
+  if(tab==='Income')return[x.id,x.date,x.amount,x.cat||x.source||'',x.note||'',x.updatedAt||0,x.account||'',x.recurKey||'',x.createdAt||''];
+  if(tab==='Expense')return[x.id,x.date,x.amount,x.cat||'',x.method||'',x.note||'',x.updatedAt||0,x.account||'',x.cardId||'',x.recurKey||'',x.createdAt||''];
+  if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||0,JSON.stringify(x.paymentDates||{}),x.frequency||'monthly',x.startYM||''];
+  if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||0,x.billingDay||'',JSON.stringify(x.payments||[]),x.cycleDays||'',x.statementDate||'',x.statementAt||'',JSON.stringify(x.pastPayments||[])];
+  if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||0,x.settledDate||'',JSON.stringify(x.payments||[]),x.phone||''];
   if(tab==='Tombstones')return[x.id,x.store,x.recordId,x.deletedAt];
-  return[x.id,x.title,x.content||'',x.date,x.updatedAt||Date.now()]
+  return[x.id,x.title,x.content||'',x.date,x.updatedAt||0]
 }
-
-// Safe two-way merge: newer updatedAt wins on shared ids; records only on one
-// side are added to the other. This alone never deletes anything — that's
-// handled separately via tombstones (see syncNow), since a record missing
-// from one side is ambiguous: it might mean "deleted there" or just "that
-// device hasn't synced it in yet".
+// Newer updatedAt wins on shared ids; one-sided records are added. Deletions are handled via tombstones.
 function mergeRecords(localArr,remoteArr){
   let result=localArr.map(r=>Object.assign({},r));
   let byId=new Map(result.filter(r=>r.id!=null).map(r=>[r.id,r]));
   for(let r of remoteArr){
     if(r.id!=null&&byId.has(r.id)){
       let existing=byId.get(r.id);
-      if((r.updatedAt||0)>(existing.updatedAt||0))Object.assign(existing,r,{id:existing.id})
-    }else if(r.id!=null){
-      let obj=Object.assign({},r);result.push(obj);byId.set(obj.id,obj)
-    }else{
-      let obj=Object.assign({},r);delete obj.id;result.push(obj)
-    }
+      if((r.updatedAt||0)>(existing.updatedAt||0)){
+        // don't let an older Sheet layout (missing new columns) wipe fields it doesn't know about
+        for(let k of Object.keys(r))if(r[k]===undefined)delete r[k];
+        Object.assign(existing,r,{id:existing.id})
+      }
+    }else if(r.id!=null){let obj=Object.assign({},r);result.push(obj);byId.set(obj.id,obj)}
+    else{let obj=Object.assign({},r);delete obj.id;result.push(obj)}
   }
   return result
 }
-
 async function scriptGetAll(){
-  let url=getScriptUrl(),token=getSyncToken();
-  let res=await fetch(url+'?all=1&token='+encodeURIComponent(token));
+  let res=await fetch(getScriptUrl()+'?all=1&token='+encodeURIComponent(getSyncToken()));
   if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
-  let data=await res.json();
-  if(data.error)throw new Error('Script error: '+data.error);
+  let data=await res.json();if(data.error)throw new Error('Script error: '+data.error);
   return data.tabs||{}
 }
 async function scriptPostAll(tabsData){
-  let url=getScriptUrl(),token=getSyncToken();
-  let res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token,all:true,tabs:tabsData})});
+  let res=await fetch(getScriptUrl(),{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:getSyncToken(),all:true,tabs:tabsData})});
   if(!res.ok)throw new Error('Script request failed: HTTP '+res.status);
-  let data=await res.json();
-  if(data.error)throw new Error('Script error: '+data.error)
+  let data=await res.json();if(data.error)throw new Error('Script error: '+data.error)
 }
-// One retry on transient network hiccups (mobile drops, brief Apps Script cold-start blips)
-async function withRetry(fn,label){
-  try{return await fn()}
-  catch(e){
-    updateSyncStatus(label+' failed once, retrying…');
-    await new Promise(r=>setTimeout(r,800));
-    return await fn()
-  }
-}
+async function withRetry(fn,label){try{return await fn()}catch(e){updateSyncStatus(label+' failed once, retrying…');await new Promise(r=>setTimeout(r,800));return await fn()}}
 const TAB_STORE_MAP={Income:'income',Expense:'expense',Dues:'dues',CreditCards:'creditcards',Advances:'advances',Notes:'notes'};
 let isSyncing=false,syncQueued=false;
 async function syncNow(){
-  if(isSyncing){syncQueued=true;return} // avoid two overlapping syncs racing on the same rows — queue instead
+  if(isSyncing){syncQueued=true;return}
   isSyncing=true;
-  let btn=document.getElementById('syncNowBtn');if(btn)btn.disabled=true;
+  let btn=$('syncNowBtn');if(btn)btn.disabled=true;
   try{
     if(!getScriptUrl()||!getSyncToken())throw new Error('Paste your Apps Script URL and token above first, then Save.');
     updateSyncStatus('Syncing…');
-    // Single round-trip down: every tab's rows in one response.
+    while(refreshing)await refreshing;
     let remoteTabs=await withRetry(()=>scriptGetAll(),'Fetching');
 
-    // Merge this device's delete history with whatever other devices have
-    // recorded, so a deletion made anywhere eventually applies everywhere.
+    // Merge delete history from all devices; prune very old tombstones so the Sheet doesn't grow forever.
     let remoteTombstones=rowsToObjects('Tombstones',remoteTabs.Tombstones);
     let localTombstones=await all('tombstones');
-    let tombMap=new Map();
-    for(let t of[...localTombstones,...remoteTombstones]){
-      let existing=tombMap.get(t.id);
-      if(!existing||t.deletedAt>existing.deletedAt)tombMap.set(t.id,t)
-    }
-    for(let t of tombMap.values())await putExact('tombstones',t);
+    let tombMap=new Map(),pruneBefore=Date.now()-TOMBSTONE_TTL_DAYS*86400000;
+    for(let t of[...localTombstones,...remoteTombstones]){if(!t.id)continue;let ex=tombMap.get(t.id);if(!ex||t.deletedAt>ex.deletedAt)tombMap.set(t.id,t)}
+    for(let t of[...tombMap.values()]){if(t.deletedAt<pruneBefore){tombMap.delete(t.id);await deleteRecord('tombstones',t.id)}else await putExact('tombstones',t)}
 
     for(let tab of Object.keys(TAB_STORE_MAP)){
       let storeName=TAB_STORE_MAP[tab];
-      let remote=rowsToObjects(tab,remoteTabs[tab]);
-      let merged=mergeRecords(state[storeName],remote);
-      // A tombstoned record is dropped unless it was genuinely edited again
-      // after the deletion (updatedAt newer than deletedAt) — that counts as
-      // an intentional recreation, not a stale record coming back to life.
-      merged=merged.filter(obj=>{
-        let tomb=obj.id!=null?tombMap.get(storeName+':'+obj.id):null;
-        return!tomb||(obj.updatedAt||0)>tomb.deletedAt
-      });
+      let local=await all(storeName); // fresh read, so an edit made a moment ago isn't overwritten with a stale copy
+      let merged=mergeRecords(local,rowsToObjects(tab,remoteTabs[tab]));
+      merged=merged.filter(obj=>{let tomb=obj.id!=null?tombMap.get(storeName+':'+obj.id):null;return!tomb||(obj.updatedAt||0)>tomb.deletedAt});
       let keepIds=new Set(merged.filter(o=>o.id!=null).map(o=>o.id));
-      for(let existing of state[storeName])if(existing.id!=null&&!keepIds.has(existing.id))await deleteRecord(storeName,existing.id);
-      for(let obj of merged){let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId}
+      for(let ex of local)if(ex.id!=null&&!keepIds.has(ex.id))await deleteRecord(storeName,ex.id);
+      let localById=new Map(local.map(r=>[r.id,r]));
+      for(let obj of merged){
+        let before=obj.id!=null?localById.get(obj.id):null;
+        if(before&&(before.updatedAt||0)>=(obj.updatedAt||0)&&JSON.stringify(before)===JSON.stringify(obj))continue; // unchanged
+        let newId=await putExact(storeName,obj);if(!obj.id)obj.id=newId
+      }
       state[storeName]=await all(storeName)
     }
 
-    // Single round-trip up: every tab's rows in one request, tombstones included.
+    // Plan data (budgets, recurring, accounts, categories) — only if the Sheet has a "Meta" tab.
+    let hasMeta=Object.prototype.hasOwnProperty.call(remoteTabs,'Meta');
+    if(hasMeta){
+      let row=(remoteTabs.Meta||[]).find(r=>r[0]==='meta');
+      if(row&&TS(row[2])>(meta.updatedAt||0)){let m=J(row[1],null);if(m){meta=mergeMeta(m);meta.updatedAt=TS(row[2]);saveMeta(false)}}
+    }
+
     let outgoing={};
     for(let tab of Object.keys(TAB_STORE_MAP))outgoing[tab]=state[TAB_STORE_MAP[tab]].map(x=>objectToRow(tab,x));
     outgoing.Tombstones=[...tombMap.values()].map(x=>objectToRow('Tombstones',x));
+    if(hasMeta)outgoing.Meta=[['meta',JSON.stringify(meta),meta.updatedAt||0]];
     await withRetry(()=>scriptPostAll(outgoing),'Saving');
     localStorage.setItem('lastSync',new Date().toISOString());
-    refresh();
+    await refresh();
     updateSyncStatus('Synced ✓ — just now')
   }catch(e){updateSyncStatus('Sync failed: '+e.message)}
   finally{
@@ -770,8 +1149,21 @@ async function syncNow(){
   }
 }
 function refreshSyncUI(){
-  let urlEl=document.getElementById('gsScriptUrlInput');if(urlEl&&!urlEl.value)urlEl.value=getScriptUrl();
-  let tokenEl=document.getElementById('gsSyncTokenInput');if(tokenEl&&!tokenEl.value)tokenEl.value=getSyncToken();
+  let urlEl=$('gsScriptUrlInput');if(!urlEl.value)urlEl.value=getScriptUrl();
+  let tokenEl=$('gsSyncTokenInput');if(!tokenEl.value)tokenEl.value=getSyncToken();
   let last=localStorage.getItem('lastSync');
   updateSyncStatus(last?('Last synced: '+new Date(last).toLocaleString()):'Not synced yet')
 }
+
+// ---------- Start-up ----------
+(async()=>{
+  await openDB();
+  $('iDate').value=today();$('eDate').value=today();$('month').value=thisYM();$('dueStart').value=thisYM();$('rStart').value=thisYM();
+  onRecurTypeChange();
+  await refresh();
+  resetIncomeForm();resetExpenseForm();
+  refreshNotifStatus();refreshPinUI();requestPersistence();refreshSyncUI();
+  setupServiceWorker();
+  if(navigator.onLine)await syncNow(); // pull other devices' changes before logging recurring entries
+  await runRecurring()
+})();
