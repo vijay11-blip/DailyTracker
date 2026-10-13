@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v41';
+const CACHE = 'daily-tracker-v43';
 const ASSETS = [
   './',
   './index.html',
@@ -99,7 +99,13 @@ function daysFromToday(dateStr) { const t = new Date(); t.setHours(0, 0, 0, 0); 
 function sumAmt(arr) { return (arr || []).reduce((a, p) => a + (+p.amount || 0), 0); }
 
 function cardDueDateSW(card) {
-  const billingDay = card.billingDay || card.dueDay || 1;
+  if (!card.billingDay) { // due day only: next due day on/after the bill date
+    const r = card.statementDate ? parseYMD(card.statementDate) : new Date(); r.setHours(0, 0, 0, 0);
+    let d = dateInMonth(r.getFullYear(), r.getMonth(), card.dueDay || 1);
+    if (d < r) d = dateInMonth(r.getFullYear(), r.getMonth() + 1, card.dueDay || 1);
+    return d;
+  }
+  const billingDay = card.billingDay;
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const y = now.getFullYear(), m = now.getMonth();
   const thisBill = dateInMonth(y, m, billingDay);
@@ -117,7 +123,7 @@ async function checkDuesInSW() {
     const ym = ymLocal(now);
     const toYM = ymLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() + REMINDER_LEAD_DAYS));
     const floor = addMonths(ym, -DUE_LOOKBACK_MONTHS);
-    const [dues, cards, expenses] = await Promise.all([getAllSW(db, 'dues'), getAllSW(db, 'creditcards'), getAllSW(db, 'expense')]);
+    const [dues, cards] = await Promise.all([getAllSW(db, 'dues'), getAllSW(db, 'creditcards')]);
 
     for (const d of dues) {
       const days = d.days || (d.day ? [d.day] : []);
@@ -143,15 +149,14 @@ async function checkDuesInSW() {
     }
 
     for (const c of cards) {
-      const spends = c.statementDate
-        ? expenses.filter(e => e.cardId === c.id && (e.date > c.statementDate || (e.date === c.statementDate && (e.createdAt || 0) > (c.statementAt || 0))))
-        : [];
-      const remaining = (+c.balance || 0) + sumAmt(spends) - sumAmt(c.payments);
-      if (remaining <= 0) continue;
-      const dateStr = ymdLocal(cardDueDateSW(c));
-      if (daysFromToday(dateStr) <= REMINDER_LEAD_DAYS) {
-        await self.registration.showNotification('Card payment due: ' + c.cardName, {
-          body: '₹' + Number(remaining).toLocaleString('en-IN') + ' — due ' + dateStr + '.',
+      // only the current BILL counts for the due reminder (new spends go on the next bill)
+      const left = (+c.balance || 0) - sumAmt(c.payments);
+      if (left <= 0) continue;
+      const dateStr = c.stmtDueDate || ymdLocal(cardDueDateSW(c));
+      const diff = daysFromToday(dateStr);
+      if (diff <= REMINDER_LEAD_DAYS) {
+        await self.registration.showNotification((diff < 0 ? 'Card bill overdue: ' : 'Card bill due: ') + c.cardName, {
+          body: '₹' + Number(left).toLocaleString('en-IN') + (c.minDue ? ' (min ₹' + Number(c.minDue).toLocaleString('en-IN') + ')' : '') + ' — ' + (diff < 0 ? 'was ' : '') + 'due ' + dateStr + '.',
           tag: 'card-' + c.id + '-' + dateStr,
           icon: 'icon-192.png',
           badge: 'icon-192.png'
