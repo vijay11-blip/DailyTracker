@@ -1,4 +1,4 @@
-const CACHE = 'daily-tracker-v39';
+const CACHE = 'daily-tracker-v40';
 const ASSETS = [
   './',
   './index.html',
@@ -40,7 +40,8 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (new URL(e.request.url).origin !== self.location.origin) return; // Google Apps Script etc. go straight to network
   e.respondWith(
-    caches.match(e.request).then(cached => {
+    // ignoreSearch for page loads so home-screen shortcuts (index.html?quick=expense) open offline too
+    caches.match(e.request, { ignoreSearch: e.request.mode === 'navigate' }).then(cached => {
       const network = fetch(e.request)
         .then(res => {
           if (res && res.status === 200) {
@@ -166,7 +167,7 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil(
     clients.matchAll({ type: 'window' }).then(list => {
       for (const c of list) if ('focus' in c) return c.focus();
-      if (clients.openWindow) return clients.openWindow('./index.html');
+      if (clients.openWindow) return clients.openWindow('./index.html?tab=dash');
     })
   );
 });

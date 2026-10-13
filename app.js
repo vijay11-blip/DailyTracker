@@ -1,4 +1,4 @@
-const DB='financeDB', VER=4; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],notes:[],documents:[]};
+const DB='financeDB', VER=5; let db, state={income:[],expense:[],dues:[],creditcards:[],advances:[],loans:[],notes:[],documents:[]};
 const $=id=>document.getElementById(id);
 const money=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
@@ -95,14 +95,14 @@ async function confirmModal(message,okText='OK',danger=false){return!!(await mod
 function accountOptions(){return[{value:'',label:'— No account —'},...meta.accounts.map(a=>({value:a.id,label:a.name}))]}
 
 // ---------- IndexedDB ----------
-function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;db.onversionchange=()=>{db.close();location.reload()};res()};r.onerror=()=>rej(r.error)})}
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','loans','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;db.onversionchange=()=>{db.close();location.reload()};res()};r.onblocked=()=>alert('Daily Tracker is updating its storage. Please close any other open Daily Tracker tabs/windows, then reopen the app.');r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function save(store,obj){obj.updatedAt=Date.now();if(!obj.createdAt)obj.createdAt=obj.updatedAt;return putExact(store,obj)}
 function deleteRecord(store,id){return new Promise(res=>{let r=db.transaction(store,'readwrite').objectStore(store).delete(id);r.onsuccess=()=>res();r.onerror=()=>res()})}
 // Deletions in synced stores are remembered as tombstones so the next sync
 // doesn't quietly restore them from the Sheet.
-const SYNCED_STORES=new Set(['income','expense','dues','creditcards','advances','notes']);
+const SYNCED_STORES=new Set(['income','expense','dues','creditcards','advances','loans','notes']);
 function addTombstone(storeName,recordId){
   if(!SYNCED_STORES.has(storeName)||recordId==null)return Promise.resolve();
   let obj={id:storeName+':'+recordId,store:storeName,recordId,deletedAt:Date.now()};
@@ -270,7 +270,7 @@ function editIncome(id){
 function renderIncomeList(){
   let rows=filterRows(state.income,'i',x=>[x.date,x.cat||x.source,x.note,accountName(x.account)],x=>x.cat||x.source);
   $('iTotal').textContent=rows.length?`${rows.length} record${rows.length===1?'':'s'} · Total ${money(sum(rows))}${filtersActive('i')?' (filtered)':''}`:'';
-  $('incomeList').innerHTML=rows.map(x=>`<div class="row"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}${x.account?` <span class="muted">· ${esc(accountName(x.account))}</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id},'Income')">Delete</button></span></div>`).join('')
+  $('incomeList').innerHTML=rows.map(x=>`<div class="row" id="row-income-${x.id}"><span>${esc(x.date)}</span><b class="income">${money(x.amount)}</b><span>${esc(x.cat||x.source||'')}</span><span>${esc(x.note)}${x.account?` <span class="muted">· ${esc(accountName(x.account))}</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editIncome(${x.id})">Edit</button><button class="btn danger" onclick="del('income',${x.id},'Income')">Delete</button></span></div>`).join('')
     ||`<p class="muted">${filtersActive('i')?'No income matches these filters.':'💰 No income records yet — add your first one above.'}</p>`
 }
 
@@ -315,20 +315,20 @@ function renderExpenseList(){
   $('expenseList').innerHTML=rows.map(x=>{
     let via=x.cardId?cardName(x.cardId):x.account?accountName(x.account):'';
     let meth=[x.method,via].filter(Boolean).join(' · ');
-    return `<div class="row"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${meth?`<span class="muted">(${esc(meth)})</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="deleteExpense(${x.id})">Delete</button></span></div>`
+    return `<div class="row" id="row-expense-${x.id}"><span>${esc(x.date)}</span><b class="expense">${money(x.amount)}</b><span>${esc(x.cat)}</span><span>${esc(x.note)} ${meth?`<span class="muted">(${esc(meth)})</span>`:''}${x.recurKey?' <span class="muted">🔁</span>':''}</span><span class="actions"><button class="btn" onclick="editExpense(${x.id})">Edit</button><button class="btn danger" onclick="deleteExpense(${x.id})">Delete</button></span></div>`
   }).join('')||`<p class="muted">${filtersActive('e')?'No expenses match these filters.':'💸 No expense records yet — add your first one above.'}</p>`
 }
 
 // ---------- Budgets ----------
 function monthSpend(cat,ym){return sum(state.expense.filter(x=>x.cat===cat&&x.date.startsWith(ym)))}
-async function checkBudget(cat,date){
+async function checkBudget(cat,date,okToast=()=>toast('Expense saved')){
   let limit=+meta.budgets[cat]||0,ym=thisYM();
-  if(!limit||!String(date).startsWith(ym)){toast('Expense saved');return}
+  if(!limit||!String(date).startsWith(ym)){okToast();return}
   let spent=monthSpend(cat,ym),pct=spent/limit*100;
   let msg=null;
   if(pct>=100)msg=`Over budget: ${cat} is at ${money(spent)} of ${money(limit)} this month`;
   else if(pct>=80)msg=`Heads up: ${cat} has used ${Math.round(pct)}% of its ${money(limit)} budget`;
-  if(!msg){toast('Expense saved');return}
+  if(!msg){okToast();return}
   toast(msg,{type:'warn',ms:8000});
   if('Notification'in window&&Notification.permission==='granted'&&'serviceWorker'in navigator){
     let key='budget-'+cat+'-'+ym+'-'+(pct>=100?'100':'80');
@@ -441,11 +441,12 @@ function renderDues(){
     let occ=dueOccurrences(x,dueFloorYM(x),ym).filter(o=>o.ym===ym||!o.paid);
     let pills=occ.map(duePill).join(' ');
     if(!occ.some(o=>o.ym===ym)){let n=nextDueOccurrence(x);if(n)pills+=` <span class="muted" style="font-size:12.5px">Next due ${formatDueDate(n.dateStr)} ${n.dateStr.slice(0,4)}</span>`}
-    return `<div class="due-flex"><span style="min-width:140px"><b>${esc(x.name)}</b><br><span class="muted" style="font-size:12px">${FREQ_LABEL[x.frequency]||'Monthly'}</span></span><span style="min-width:80px">${money(x.amount)}</span><span class="actions" style="flex:1;flex-wrap:wrap">${pills}</span><span class="actions"><button class="btn" onclick="editDue(${x.id})">Edit</button><button class="btn danger" onclick="deleteDue(${x.id})">Delete</button></span></div>`
+    return `<div class="due-flex" id="row-dues-${x.id}"><span style="min-width:140px"><b>${esc(x.name)}</b><br><span class="muted" style="font-size:12px">${FREQ_LABEL[x.frequency]||'Monthly'}</span></span><span style="min-width:80px">${money(x.amount)}</span><span class="actions" style="flex:1;flex-wrap:wrap">${pills}</span><span class="actions"><button class="btn" onclick="editDue(${x.id})">Edit</button><button class="btn danger" onclick="deleteDue(${x.id})">Delete</button></span></div>`
   }).join('')||'<p class="muted">📅 No dues yet — add a bill above.</p>';
-  let pending=pendingDueOccurrences();
-  $('dashDues').innerHTML=pending.map(o=>{let diff=daysFromToday(o.dateStr);return `<div class="row"><b>${esc(o.due.name)}</b><span>${money(o.due.amount)}</span><span>${formatDueDate(o.dateStr)}</span><span class="pill ${diff<0?'overdue':''}" style="cursor:pointer" title="Tap to mark paid" onclick="toggleDue(${o.due.id},'${o.ym}',${o.day})">${remainingLabelFromDays(diff)}</span></div>`}).join('')
-    ||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
+  let items=pendingDueOccurrences().map(o=>{let diff=daysFromToday(o.dateStr);return{date:o.dateStr,html:`<div class="row"><b>${esc(o.due.name)}</b><span>${money(o.due.amount)}</span><span>${formatDueDate(o.dateStr)}</span><span class="pill ${diff<0?'overdue':''}" style="cursor:pointer" title="Tap to mark paid" onclick="toggleDue(${o.due.id},'${o.ym}',${o.day})">${remainingLabelFromDays(diff)}</span></div>`}});
+  items.push(...pendingEmiItems());
+  items.sort((a,b)=>a.date.localeCompare(b.date));
+  $('dashDues').innerHTML=items.map(i=>i.html).join('')||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
 }
 
 // ---------- Credit Cards ----------
@@ -528,7 +529,7 @@ function renderCards(){
     let diff=cardDaysUntilDue(x);
     let pill=out<=0?`<span class="pill paid">✓ Paid</span>`:`<span class="pill ${diff<0?'overdue':''}">${formatDueDate(ymd(cardDueDate(x)))}: ${remainingLabelFromDays(diff)}</span>`;
     let hist=(x.payments||[]).length?`<details class="hist"><summary>Payments this cycle (${x.payments.length})</summary><ul>${x.payments.map(p=>`<li>${safeDisplayDate(p.date)} — ${money(p.amount)}${p.account?' from '+esc(accountName(p.account)):''}</li>`).join('')}</ul></details>`:'';
-    return `<div class="due-flex"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}${hist}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}${pill}<span class="actions">${out>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
+    return `<div class="due-flex" id="row-creditcards-${x.id}"><b style="min-width:140px">${esc(x.cardName)}</b><span style="min-width:160px">${outstandingLine}${hist}</span>${x.limit?`<span class="muted" style="min-width:150px">Limit: ${money(x.limit)} (${util}% used)</span>`:''}${billingInfo}${pill}<span class="actions">${out>0?`<button class="btn" onclick="addCardPayment(${x.id})">+ Payment</button>`:''}<button class="btn" onclick="newStatement(${x.id})">New Statement</button><button class="btn" onclick="editCard(${x.id})">Edit</button><button class="btn danger" onclick="deleteCard(${x.id})">Delete</button></span></div>`
   }).join('')||'<p class="muted">💳 No credit cards added yet.</p>';
   let totalOut=state.creditcards.reduce((a,x)=>a+Math.max(0,cardOutstanding(x)),0);
   let totalLimit=state.creditcards.reduce((a,x)=>a+(x.limit||0),0);
@@ -718,7 +719,7 @@ function renderAdvances(){
       :`${who} ${money(x.amount)}`;
     let hist=(x.payments||[]).length?`<details class="hist"><summary>History (${x.payments.length})</summary><ul><li>${safeDisplayDate(x.createdAt?ymd(new Date(x.createdAt)):'')||'—'} — ${x.direction==='given'?'lent':'borrowed'} ${money(x.amount)}</li>${x.payments.map(p=>`<li>${safeDisplayDate(p.date)} — repaid ${money(p.amount)}${p.auto?' (marked settled)':''}</li>`).join('')}</ul></details>`:'';
     let due=x.dueDate&&x.status==='pending'?`Repay by ${safeDisplayDate(x.dueDate)}`:'';
-    return `<div class="row"><span><b>${esc(x.person)}</b></span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${due} ${x.note?esc(x.note):''}${hist}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" title="Tap to ${x.status==='settled'?'reopen':'mark fully settled'}" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'✓ Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'⏳ Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Repayment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id},'Advance')">Delete</button></span></div>`
+    return `<div class="row" id="row-advances-${x.id}"><span><b>${esc(x.person)}</b></span><b class="${x.direction==='given'?'income':'expense'}">${amountLine}</b><span>${due} ${x.note?esc(x.note):''}${hist}</span><span class="pill ${x.status==='settled'?'paid':''}" style="cursor:pointer" title="Tap to ${x.status==='settled'?'reopen':'mark fully settled'}" onclick="toggleAdvanceStatus(${x.id})">${x.status==='settled'?'✓ Settled'+(x.settledDate?' on '+safeDisplayDate(x.settledDate):''):'⏳ Pending'}</span><span class="actions">${x.status==='pending'?`<button class="btn" onclick="addAdvancePayment(${x.id})">+ Repayment</button>`:''}<button class="btn" onclick="editAdvance(${x.id})">Edit</button><button class="btn danger" onclick="del('advances',${x.id},'Advance')">Delete</button></span></div>`
   }).join('')||'<p class="muted">🤝 No advances yet — track money lent or borrowed here.</p>'
 }
 
@@ -734,7 +735,7 @@ async function addNote(){
 function editNote(id){let x=state.notes.find(r=>r.id===id);if(!x)return;editingNoteId=id;$('noteTitle').value=x.title;$('noteContent').value=x.content||'';$('noteSaveBtn').textContent='Update Note';$('noteCancelEdit').classList.remove('hidden');show('notes');window.scrollTo(0,0)}
 function renderNotes(){
   let rows=state.notes.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)||b.id-a.id);
-  $('noteList').innerHTML=rows.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id},'Note')">Delete</button></span></div>`).join('')||'<p class="muted">📝 No notes yet.</p>'
+  $('noteList').innerHTML=rows.map(x=>`<div class="row" id="row-notes-${x.id}" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc((x.content||'').slice(0,120))}</span></span><span class="actions"><button class="btn" onclick="editNote(${x.id})">Edit</button><button class="btn danger" onclick="del('notes',${x.id},'Note')">Delete</button></span></div>`).join('')||'<p class="muted">📝 No notes yet.</p>'
 }
 
 // ---------- Documents ----------
@@ -753,7 +754,7 @@ async function addDocument(){
 }
 function renderDocuments(){
   let rows=state.documents.slice().sort((a,b)=>b.id-a.id);
-  $('documentList').innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener" download="${esc(x.fileName||x.title)}">Open</a>`:''}<button class="btn danger" onclick="del('documents',${x.id},'Document')">Delete</button></span></div>`}).join('')||'<p class="muted">📄 No documents yet.</p>'
+  $('documentList').innerHTML=rows.map(x=>{let url=getDocumentUrl(x);return `<div class="row" id="row-documents-${x.id}" style="grid-template-columns:1fr auto"><span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.tags||'')} · ${esc(x.dateAdded)}</span></span><span class="actions">${url?`<a class="btn" href="${url}" target="_blank" rel="noopener" download="${esc(x.fileName||x.title)}">Open</a>`:''}<button class="btn danger" onclick="del('documents',${x.id},'Document')">Delete</button></span></div>`}).join('')||'<p class="muted">📄 No documents yet.</p>'
 }
 
 // ---------- Dashboard ----------
@@ -768,7 +769,8 @@ function render(){
   $('dBalanceLabel').textContent=period==='all'?'Balance (all time)':'Saved this month';
   $('dashPeriodNote').textContent=period==='all'?'Showing all-time totals':'Showing '+monthName;
   $('dIncome').textContent=money(inc);$('dExpense').textContent=money(exp);$('dBalance').textContent=money(inc-exp);
-  renderIncomeList();renderExpenseList();renderDues();renderCards();renderAdvances();renderNotes();renderDocuments();renderDashInsights();renderDashBudgets();renderPlan(false);refreshBackupBanner();
+  renderIncomeList();renderExpenseList();renderDues();renderCards();renderAdvances();renderLoans();renderNotes();renderDocuments();renderDashInsights();renderDashBudgets();renderPlan(false);refreshBackupBanner();
+  if(val('globalSearch').trim())runGlobalSearch();
   if(!$('reports').classList.contains('hidden'))report()
 }
 function daysElapsedInMonth(ym){let curYM=thisYM();if(ym===curYM)return new Date().getDate();if(ym<curYM)return daysInMonth(ym);return 0}
@@ -789,7 +791,7 @@ function renderDashInsights(){
     <div class="insight"><small>Savings rate (this month)</small><b class="${savingsRate>=0?'income':'expense'}">${savingsRate.toFixed(0)}%</b></div>
     <div class="insight"><small>Spend vs same days last month</small><b>${money(thisExp)}</b>${delta}</div>
     <div class="insight"><small>Daily avg spend</small><b>${money(dailyAvg)}</b></div>
-    <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>`
+    <div class="insight"><small>Net worth (incl. advances)</small><b class="${totalBalance+netAdv>=0?'income':'expense'}">${money(totalBalance+netAdv)}</b></div>${loanInsightTile()}`
 }
 function show(id){
   document.querySelectorAll('main>section').forEach(x=>x.classList.toggle('hidden',x.id!==id));
@@ -904,6 +906,12 @@ async function checkDueNotifications(){
       notified[key]=todayStr
     }
   }
+  for(let it of pendingEmiItems()){
+    let diff=daysFromToday(it.date);if(diff>REMINDER_LEAD_DAYS)continue;
+    let key='emi-'+it.loan.id+'-'+it.date;if(notified[key]===todayStr)continue;
+    reg.showNotification((diff<0?'EMI overdue: ':'EMI due: ')+it.loan.name,{body:money(it.row.emi)+' — EMI #'+it.row.no+' '+(diff<0?'was ':'')+'due '+formatDueDate(it.date)+'.',tag:key,icon:'icon-192.png',badge:'icon-192.png'});
+    notified[key]=todayStr
+  }
   saveNotified(notified)
 }
 async function requestPersistence(){if(!(navigator.storage&&navigator.storage.persist))return;if(!await navigator.storage.persisted())await navigator.storage.persist();refreshPersistStatus()}
@@ -947,10 +955,11 @@ async function removePin(){
   localStorage.removeItem('dtPin');refreshPinUI();toast('PIN removed')
 }
 let lockFails=0,hiddenAt=0;
-function lockApp(){if(!getPin())return;$('lock').classList.remove('hidden');$('lockPin').value='';$('lockMsg').textContent='';setTimeout(()=>$('lockPin').focus(),50)}
+function isLocked(){return!$('lock').classList.contains('hidden')}
+function lockApp(){if(!getPin())return;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('lock').classList.remove('hidden');$('lockPin').value='';$('lockMsg').textContent='';setTimeout(()=>$('lockPin').focus(),50)}
 async function unlock(){
   let inp=$('lockPin');
-  if(await verifyPin(inp.value)){$('lock').classList.add('hidden');lockFails=0;inp.value='';return}
+  if(await verifyPin(inp.value)){$('lock').classList.add('hidden');lockFails=0;inp.value='';if(pendingAction){let f=pendingAction;pendingAction=null;f()}return}
   lockFails++;inp.value='';
   if(lockFails>=5){inp.disabled=true;$('lockMsg').textContent='Too many attempts — wait 30 seconds';setTimeout(()=>{inp.disabled=false;lockFails=0;$('lockMsg').textContent='';inp.focus()},30000)}
   else $('lockMsg').textContent='Wrong PIN'
@@ -1034,6 +1043,7 @@ const SHEET_TABS={
   CreditCards:['id','cardName','balance','limit','dueDay','paidDates','linkedExpenses','paymentDates','updatedAt','billingDay','payments','cycleDays','statementDate','statementAt','pastPayments'],
   Advances:['id','person','amount','direction','status','dueDate','note','updatedAt','settledDate','payments','phone'],
   Notes:['id','title','content','date','updatedAt'],
+  Loans:['id','name','lender','principal','rate','tenureMonths','startDate','emi','paidBefore','payments','updatedAt'],
   Tombstones:['id','store','recordId','deletedAt'],
   Meta:['key','json','updatedAt']
 };
@@ -1050,6 +1060,7 @@ function rowsToObjects(tab,rows){
     if(tab==='Dues')return{id,name:r[1]||'Untitled',amount:+r[2]||0,days:parseDays(r[3]||''),paidDates:splitList(r[4]),linkedExpenses:J(r[5],{}),updatedAt:TS(r[6]),paymentDates:J(r[7],{}),frequency:FREQ_INTERVAL[r[8]]?r[8]:'monthly',startYM:normYM(r[9])||undefined};
     if(tab==='CreditCards')return{id,cardName:r[1]||'Untitled',balance:+r[2]||0,limit:r[3]?+r[3]:null,dueDay:+r[4]||1,paidDates:splitList(r[5]),linkedExpenses:J(r[6],{}),paymentDates:J(r[7],{}),updatedAt:TS(r[8]),billingDay:r[9]?+r[9]:null,payments:J(r[10],[]),cycleDays:r[11]?+r[11]:null,statementDate:normDate(r[12])||undefined,statementAt:TS(r[13]),pastPayments:J(r[14],[])};
     if(tab==='Advances')return{id,person:String(r[1]||''),amount:+r[2]||0,direction:r[3]==='taken'?'taken':'given',status:r[4]==='settled'?'settled':'pending',dueDate:normDate(r[5]),note:r[6]||'',updatedAt:TS(r[7]),settledDate:normDate(r[8])||undefined,payments:J(r[9],[]),phone:String(r[10]||'')};
+    if(tab==='Loans')return{id,name:String(r[1]||'Loan'),lender:String(r[2]||''),principal:+r[3]||0,rate:+r[4]||0,tenureMonths:+r[5]||1,startDate:normDate(r[6])||today(),emi:r[7]?+r[7]:null,paidBefore:+r[8]||0,payments:J(r[9],[]),updatedAt:TS(r[10])};
     if(tab==='Tombstones')return{id:String(r[0]||''),store:r[1]||'',recordId:rowId(r[2]),deletedAt:TS(r[3])};
     return{id,title:r[1]||'Untitled',content:r[2]||'',date:normDate(r[3])||today(),updatedAt:TS(r[4])}
   })
@@ -1060,6 +1071,7 @@ function objectToRow(tab,x){
   if(tab==='Dues')return[x.id,x.name,x.amount,(x.days||[]).join(','),(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),x.updatedAt||0,JSON.stringify(x.paymentDates||{}),x.frequency||'monthly',x.startYM||''];
   if(tab==='CreditCards')return[x.id,x.cardName,x.balance,x.limit||'',x.dueDay,(x.paidDates||[]).join(','),JSON.stringify(x.linkedExpenses||{}),JSON.stringify(x.paymentDates||{}),x.updatedAt||0,x.billingDay||'',JSON.stringify(x.payments||[]),x.cycleDays||'',x.statementDate||'',x.statementAt||'',JSON.stringify(x.pastPayments||[])];
   if(tab==='Advances')return[x.id,x.person,x.amount,x.direction,x.status,x.dueDate||'',x.note||'',x.updatedAt||0,x.settledDate||'',JSON.stringify(x.payments||[]),x.phone||''];
+  if(tab==='Loans')return[x.id,x.name,x.lender||'',x.principal,x.rate,x.tenureMonths,x.startDate,x.emi||'',x.paidBefore||0,JSON.stringify(x.payments||[]),x.updatedAt||0];
   if(tab==='Tombstones')return[x.id,x.store,x.recordId,x.deletedAt];
   return[x.id,x.title,x.content||'',x.date,x.updatedAt||0]
 }
@@ -1092,7 +1104,7 @@ async function scriptPostAll(tabsData){
   let data=await res.json();if(data.error)throw new Error('Script error: '+data.error)
 }
 async function withRetry(fn,label){try{return await fn()}catch(e){updateSyncStatus(label+' failed once, retrying…');await new Promise(r=>setTimeout(r,800));return await fn()}}
-const TAB_STORE_MAP={Income:'income',Expense:'expense',Dues:'dues',CreditCards:'creditcards',Advances:'advances',Notes:'notes'};
+const TAB_STORE_MAP={Income:'income',Expense:'expense',Dues:'dues',CreditCards:'creditcards',Advances:'advances',Loans:'loans',Notes:'notes'};
 let isSyncing=false,syncQueued=false;
 async function syncNow(){
   if(isSyncing){syncQueued=true;return}
@@ -1111,7 +1123,9 @@ async function syncNow(){
     for(let t of[...localTombstones,...remoteTombstones]){if(!t.id)continue;let ex=tombMap.get(t.id);if(!ex||t.deletedAt>ex.deletedAt)tombMap.set(t.id,t)}
     for(let t of[...tombMap.values()]){if(t.deletedAt<pruneBefore){tombMap.delete(t.id);await deleteRecord('tombstones',t.id)}else await putExact('tombstones',t)}
 
-    for(let tab of Object.keys(TAB_STORE_MAP)){
+    // Loans only sync once the Sheet has a "Loans" tab (older Apps Scripts may not accept new tabs).
+    let syncTabs=Object.keys(TAB_STORE_MAP).filter(t=>t!=='Loans'||Object.prototype.hasOwnProperty.call(remoteTabs,'Loans'));
+    for(let tab of syncTabs){
       let storeName=TAB_STORE_MAP[tab];
       let local=await all(storeName); // fresh read, so an edit made a moment ago isn't overwritten with a stale copy
       let merged=mergeRecords(local,rowsToObjects(tab,remoteTabs[tab]));
@@ -1135,7 +1149,7 @@ async function syncNow(){
     }
 
     let outgoing={};
-    for(let tab of Object.keys(TAB_STORE_MAP))outgoing[tab]=state[TAB_STORE_MAP[tab]].map(x=>objectToRow(tab,x));
+    for(let tab of syncTabs)outgoing[tab]=state[TAB_STORE_MAP[tab]].map(x=>objectToRow(tab,x));
     outgoing.Tombstones=[...tombMap.values()].map(x=>objectToRow('Tombstones',x));
     if(hasMeta)outgoing.Meta=[['meta',JSON.stringify(meta),meta.updatedAt||0]];
     await withRetry(()=>scriptPostAll(outgoing),'Saving');
@@ -1155,13 +1169,326 @@ function refreshSyncUI(){
   updateSyncStatus(last?('Last synced: '+new Date(last).toLocaleString()):'Not synced yet')
 }
 
+// ---------- Loans / EMI tracker ----------
+let editingLoanId=null;
+const openDetails=new Set(); // keeps schedule / what-if panels open across re-renders
+const simState={};           // per-loan what-if inputs + last result
+function rememberDetails(el){el.open?openDetails.add(el.dataset.dkey):openDetails.delete(el.dataset.dkey)}
+function dOpen(key){return openDetails.has(key)?' open':''}
+function round2(n){return Math.round(n*100)/100}
+function fmtYM(ym){let[y,m]=ym.split('-').map(Number);return new Date(y,m-1,1).toLocaleDateString('en-IN',{month:'short',year:'numeric'})}
+function emiFormula(P,r,n){if(n<=0)return P;if(!r)return P/n;let f=Math.pow(1+r,n);return P*r*f/(f-1)}
+function loanRate(L){return(+L.rate||0)/1200}
+function installmentDate(L,i){let s=L.startDate||today();return dateForDay(addMonths(s.slice(0,7),i),+s.slice(8,10)||1)}
+function tenureLabel(n){let y=Math.floor(n/12),m=n%12;return[y?y+' yr':'',m?m+' mo':''].filter(Boolean).join(' ')||'0 mo'}
+// Full amortisation with the payments you've actually recorded:
+// - EMIs are counted in order (paidBefore + recorded EMI payments)
+// - prepayments cut the principal on their date; "emi" mode then recalculates a lower EMI
+function loanCalc(L){
+  let r=loanRate(L),n=Math.max(1,+L.tenureMonths||1),P=+L.principal||0;
+  let emi=+L.emi||emiFormula(P,r,n);
+  let pays=L.payments||[];
+  let pre=pays.filter(p=>p.type==='prepay').slice().sort((a,b)=>a.date.localeCompare(b.date));
+  let paidCount=(+L.paidBefore||0)+pays.filter(p=>p.type==='emi').length;
+  let bal=P,pi=0,rows=[],interestPaid=0,principalPaid=0,totalInterest=0,k=0,todayStr=today();
+  for(let i=0;bal>0.005&&i<n+600;i++){
+    let date=installmentDate(L,i);
+    while(pi<pre.length&&pre[pi].date<date&&bal>0.005){
+      let a=Math.min(+pre[pi].amount||0,bal);bal-=a;principalPaid+=a;
+      rows.push({prepay:true,date:pre[pi].date,amount:a,balance:bal});
+      if(pre[pi].mode==='emi'&&bal>0.005)emi=emiFormula(bal,r,Math.max(1,n-i));
+      pi++
+    }
+    if(bal<=0.005)break;
+    let interest=bal*r,prin=Math.min(Math.max(emi-interest,0),bal);
+    if(prin<=0&&i>=n)break; // EMI doesn't even cover interest — stop instead of looping forever
+    bal-=prin;totalInterest+=interest;
+    let paid=k<paidCount;k++;
+    if(paid){interestPaid+=interest;principalPaid+=prin}
+    rows.push({no:k,date,emi:interest+prin,principal:prin,interest,balance:Math.max(bal,0),paid})
+  }
+  let inst=rows.filter(x=>!x.prepay),next=inst.find(x=>!x.paid)||null;
+  return{emi,rows,inst,next,interestPaid,principalPaid,totalInterest,
+    outstanding:Math.max(0,P-principalPaid),paidCount:Math.min(paidCount,inst.length),total:inst.length,
+    overdue:inst.filter(x=>!x.paid&&x.date<todayStr),closing:inst.length?inst[inst.length-1].date:'',
+    done:!next,tooSmall:P>0&&emi<=P*r}
+}
+function loanFromForm(){
+  let tenure=parseInt(val('loanTenure'),10)||0;
+  if(val('loanTenureUnit')==='years')tenure*=12;
+  return{name:val('loanName').trim(),lender:val('loanLender').trim(),principal:parseAmount(val('loanPrincipal')),rate:parseFloat(val('loanRate')),
+    tenureMonths:tenure,startDate:val('loanStart')||today(),emi:parseAmount(val('loanEmi'))||null}
+}
+function autoPaidBefore(L){let t=today(),c=loanCalc({...L,paidBefore:0,payments:[]});return c.inst.filter(x=>x.date<t).length}
+function loanPreview(){
+  let L=loanFromForm(),el=$('loanPreview');
+  if(!L.principal||!(L.tenureMonths>0)||isNaN(L.rate)){el.textContent='';return}
+  let c=loanCalc({...L,paidBefore:0,payments:[]});
+  if(c.tooSmall){el.innerHTML='<span class="expense">⚠ That EMI doesn\'t cover the monthly interest — check the numbers.</span>';return}
+  let pb=val('loanPaidBefore')===''&&!editingLoanId?autoPaidBefore(L):null;
+  el.innerHTML=`EMI <b>${money(round2(c.emi))}</b> · total interest <b>${money(round2(c.totalInterest))}</b> · total payable <b>${money(round2(L.principal+c.totalInterest))}</b> · last EMI ${c.closing?formatDueDate(c.closing)+' '+c.closing.slice(0,4):'—'}${pb?` · <span class="balance">${pb} EMI${pb===1?'':'s'} before today will be marked paid</span>`:''}`
+}
+function resetLoanForm(){['loanName','loanLender','loanPrincipal','loanRate','loanTenure','loanEmi','loanPaidBefore'].forEach(k=>$(k).value='');$('loanTenureUnit').value='months';$('loanStart').value=today();editingLoanId=null;$('loanSaveBtn').textContent='Save Loan';$('loanCancelEdit').classList.add('hidden');$('loanPreview').textContent=''}
+async function addLoan(){
+  let f=loanFromForm();
+  if(!f.name)return alert('Enter a loan name');
+  if(!f.principal)return alert('Enter the loan amount');
+  if(isNaN(f.rate)||f.rate<0||f.rate>60)return alert('Enter the yearly interest rate (e.g. 9.5)');
+  if(!(f.tenureMonths>0&&f.tenureMonths<=600))return alert('Enter the tenure (up to 50 years)');
+  if(loanCalc({...f,paidBefore:0,payments:[]}).tooSmall)return alert('That EMI doesn\'t cover the monthly interest — please check the EMI amount.');
+  let existing=editingLoanId?state.loans.find(l=>l.id===editingLoanId):null;
+  let pbStr=val('loanPaidBefore');
+  let paidBefore=pbStr!==''?Math.max(0,parseInt(pbStr,10)||0):existing?(existing.paidBefore||0):autoPaidBefore(f);
+  let obj={...(existing||{}),...f,paidBefore,payments:existing?.payments||[]};
+  await save('loans',obj);resetLoanForm();refreshAndSync();toast(existing?'Loan updated':'Loan saved')
+}
+function editLoan(id){
+  let L=state.loans.find(l=>l.id===id);if(!L)return;editingLoanId=id;
+  $('loanName').value=L.name;$('loanLender').value=L.lender||'';$('loanPrincipal').value=L.principal;$('loanRate').value=L.rate;
+  let yrs=L.tenureMonths%12===0;$('loanTenure').value=yrs?L.tenureMonths/12:L.tenureMonths;$('loanTenureUnit').value=yrs?'years':'months';
+  $('loanStart').value=L.startDate;$('loanEmi').value=L.emi||'';$('loanPaidBefore').value=L.paidBefore||0;
+  $('loanSaveBtn').textContent='Update Loan';$('loanCancelEdit').classList.remove('hidden');show('loans');window.scrollTo(0,0);loanPreview()
+}
+async function deleteLoan(id){
+  let L=state.loans.find(l=>l.id===id);if(!L)return;
+  if(!await confirmModal(`Delete "${L.name}"? EMIs already added to Expenses stay there.`,'Delete',true))return;
+  await deleteWithTombstone('loans',id);refreshAndSync();toast('Loan deleted')
+}
+function ensureExpenseCat(c){if(!meta.expenseCats.includes(c)){meta.expenseCats.push(c);saveMeta()}}
+async function payEmi(id){
+  let L=state.loans.find(l=>l.id===id);if(!L)return;
+  let c=loanCalc(L);if(!c.next)return toast('This loan is fully repaid 🎉');
+  let fields=[{name:'amount',label:`EMI #${c.next.no} — due ${formatDueDate(c.next.date)} ${c.next.date.slice(0,4)}`,type:'number',step:'0.01',inputmode:'decimal',value:round2(c.next.emi)},{name:'date',label:'Paid on',type:'date',value:today()},{name:'log',label:'Also add it to Expenses?',type:'select',options:[{value:'yes',label:'Yes — category "EMI"'},{value:'no',label:'No'}],value:'yes'}];
+  if(meta.accounts.length)fields.push({name:'account',label:'Paid from account',type:'select',options:accountOptions(),value:''});
+  let r=await modal({title:'Pay EMI — '+L.name,fields,okText:'Mark EMI paid'});if(!r)return;
+  let amt=parseAmount(r.amount);if(!amt)return alert('Enter the EMI amount paid');
+  let pay={id:uid(),type:'emi',no:c.next.no,date:r.date||today(),amount:amt};
+  if(r.log==='yes'){ensureExpenseCat('EMI');pay.expenseId=await save('expense',{date:pay.date,amount:amt,cat:'EMI',method:r.account?'Bank':'',account:r.account||'',note:`${L.name} EMI #${c.next.no}`})}
+  L.payments=[...(L.payments||[]),pay];
+  await save('loans',L);await refreshAndSync();
+  toast(`EMI #${c.next.no} paid for ${L.name}`,{undo:()=>removeLoanPayment(id,pay.id,true)})
+}
+async function prepayLoan(id,preset){
+  let L=state.loans.find(l=>l.id===id);if(!L)return;
+  let c=loanCalc(L);if(c.done)return toast('This loan is fully repaid 🎉');
+  let r=await modal({title:'Part-prepayment — '+L.name,message:'Outstanding principal: '+money(round2(c.outstanding)),fields:[
+    {name:'amount',label:'Extra amount paid',type:'number',step:'0.01',inputmode:'decimal',value:preset||''},
+    {name:'date',label:'Paid on',type:'date',value:today()},
+    {name:'mode',label:'What did the bank do?',type:'select',options:[{value:'tenure',label:'Kept EMI, loan ends sooner'},{value:'emi',label:'Kept tenure, EMI reduced'}],value:'tenure'},
+    {name:'log',label:'Also add it to Expenses?',type:'select',options:[{value:'no',label:'No'},{value:'yes',label:'Yes — category "EMI"'}],value:'no'}],okText:'Record prepayment'});
+  if(!r)return;
+  let amt=parseAmount(r.amount);if(!amt)return alert('Enter the amount');
+  if(amt>c.outstanding+0.01&&!await confirmModal(`That's more than the outstanding ${money(round2(c.outstanding))}. Record it anyway?`,'Record'))return;
+  let pay={id:uid(),type:'prepay',date:r.date||today(),amount:amt,mode:r.mode==='emi'?'emi':'tenure'};
+  if(r.log==='yes'){ensureExpenseCat('EMI');pay.expenseId=await save('expense',{date:pay.date,amount:amt,cat:'EMI',method:'Bank',note:`${L.name} prepayment`})}
+  L.payments=[...(L.payments||[]),pay];
+  await save('loans',L);delete simState[id];await refreshAndSync();
+  toast(`Prepayment of ${money(amt)} recorded`,{undo:()=>removeLoanPayment(id,pay.id,true)})
+}
+async function removeLoanPayment(loanId,payId,silent){
+  let L=state.loans.find(l=>l.id===loanId);if(!L)return;
+  let p=(L.payments||[]).find(x=>x.id===payId);if(!p)return;
+  if(!silent&&!await confirmModal(`Remove this ${p.type==='emi'?'EMI':'prepayment'} of ${money(p.amount)}?${p.expenseId?' Its matching expense is removed too.':''}`,'Remove',true))return;
+  L.payments=L.payments.filter(x=>x.id!==payId);
+  if(p.expenseId)await deleteWithTombstone('expense',p.expenseId);
+  await save('loans',L);await refreshAndSync();if(!silent)toast('Payment removed')
+}
+// month-by-month payoff from the current balance
+function simulatePayoff(bal,r,emi,extra){
+  let m=0,int=0;
+  while(bal>0.005&&m<1200){let i=bal*r;let p=Math.min(emi+extra-i,bal);if(p<=0)return{months:Infinity,interest:Infinity};int+=i;bal-=p;m++}
+  return{months:m,interest:int}
+}
+function simInput(id,field,v){simState[id]=simState[id]||{};simState[id][field]=v}
+function runLoanSim(id){
+  let L=state.loans.find(l=>l.id===id);if(!L)return;
+  let c=loanCalc(L),s=simState[id]||{},lump=parseFloat(s.lump)||0,extra=parseFloat(s.extra)||0,out;
+  let r=loanRate(L),bal=c.outstanding,firstYM=c.next?c.next.date.slice(0,7):thisYM();
+  if(c.done)out='<p class="muted">This loan is already repaid.</p>';
+  else if(!lump&&!extra)out='<p class="muted">Enter a one-time amount, an extra amount every month, or both.</p>';
+  else if(lump>=bal-0.005){
+    let base=simulatePayoff(bal,r,c.emi,0);
+    out=`<div class="opt">Paying <b>${money(round2(bal))}</b> closes the loan now and saves <b class="income">${money(round2(base.interest))}</b> of future interest (${base.months} EMIs).</div>`
+  }else{
+    let base=simulatePayoff(bal,r,c.emi,0),a=simulatePayoff(bal-lump,r,c.emi,extra);
+    let saved=base.interest-a.interest,mSaved=base.months-a.months;
+    out=`<div class="opt"><b>Keep the same EMI${extra?` + ${money(extra)} extra each month`:''}</b><br>Interest saved: <b class="income">${money(round2(saved))}</b><br>Loan closes <b>${mSaved} month${mSaved===1?'':'s'} earlier</b> (${tenureLabel(mSaved)}) — ${fmtYM(addMonths(firstYM,a.months-1))} instead of ${fmtYM(addMonths(firstYM,base.months-1))}</div>`;
+    if(lump){
+      let newEmi=emiFormula(bal-lump,r,base.months),intB=newEmi*base.months-(bal-lump);
+      out+=`<div class="opt"><b>Or keep the same end date (${fmtYM(addMonths(firstYM,base.months-1))})</b><br>EMI drops to <b>${money(round2(newEmi))}</b> (from ${money(round2(c.emi))})<br>Interest saved: <b class="income">${money(round2(base.interest-intB))}</b></div><p class="muted" style="margin:8px 0 0">Keeping the EMI saves more interest. Ask your bank which option they apply.</p><button class="btn" style="margin-top:8px" onclick="prepayLoan(${id},${lump})">I've paid this — record ₹${lump.toLocaleString('en-IN')} prepayment</button>`
+    }
+  }
+  simState[id]={...s,out};
+  let el=$('sim-out-'+id);if(el)el.innerHTML=out
+}
+function loanStatusPill(c){
+  if(c.done)return'<span class="pill paid">✓ Fully repaid</span>';
+  if(c.overdue.length)return`<span class="pill overdue">⚠️ ${c.overdue.length} EMI${c.overdue.length===1?'':'s'} overdue</span>`;
+  let d=daysFromToday(c.next.date);
+  return`<span class="pill ${d<=REMINDER_LEAD_DAYS?'':'paid'}">Next EMI ${formatDueDate(c.next.date)}: ${remainingLabelFromDays(d)}</span>`
+}
+function renderLoans(){
+  let totalOut=0,monthly=0,intPaid=0;
+  $('loanList').innerHTML=state.loans.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(L=>{
+    let c=loanCalc(L),P=+L.principal||0,pct=P?Math.min(100,c.principalPaid/P*100):0;
+    totalOut+=c.outstanding;intPaid+=c.interestPaid;if(!c.done)monthly+=c.emi;
+    let sched=c.rows.map(x=>x.prepay
+      ?`<tr class="pre"><td>Prepaid</td><td>${formatDueDate(x.date)} ${x.date.slice(2,4)}</td><td>${money(round2(x.amount))}</td><td>${money(round2(x.amount))}</td><td>—</td><td>${money(round2(x.balance))}</td><td>✓</td></tr>`
+      :`<tr class="${x.paid?'paid':c.next&&x.no===c.next.no?'next':''}"><td>${x.no}</td><td>${formatDueDate(x.date)} ${x.date.slice(2,4)}</td><td>${money(round2(x.emi))}</td><td>${money(round2(x.principal))}</td><td>${money(round2(x.interest))}</td><td>${money(round2(x.balance))}</td><td>${x.paid?'✓':x.date<today()?'⚠️':''}</td></tr>`).join('');
+    let s=simState[L.id]||{};
+    let hist=(L.payments||[]).slice().sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<li>${safeDisplayDate(p.date)} — ${p.type==='emi'?'EMI #'+(p.no||'')+' ':'Prepayment '}${money(p.amount)}${p.mode==='emi'?' (EMI reduced)':''} <button class="btn" style="padding:2px 8px;min-height:0;font-size:11.5px" onclick="removeLoanPayment(${L.id},'${p.id}')">remove</button></li>`).join('');
+    return `<div class="loan-card" id="row-loans-${L.id}">
+      <div class="loan-head"><div><b style="font-size:16px">${esc(L.name)}</b> <span class="muted" style="font-size:12.5px">${L.lender?esc(L.lender)+' · ':''}${+L.rate}% · ${tenureLabel(+L.tenureMonths)} · ${money(P)}</span></div><div><b style="font-size:17px">${money(round2(c.emi))}</b><span class="muted">/month</span></div></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px"><div class="bar" style="flex:1"><i style="width:${pct.toFixed(1)}%"></i></div><span class="muted" style="font-size:12.5px">${pct.toFixed(0)}% repaid</span></div>
+      <div class="loan-stats">
+        <div><small>Outstanding</small><b class="expense">${money(round2(c.outstanding))}</b></div>
+        <div><small>Principal repaid</small><b class="income">${money(round2(c.principalPaid))}</b></div>
+        <div><small>Interest paid so far</small><b>${money(round2(c.interestPaid))}</b></div>
+        <div><small>Total interest (loan)</small><b>${money(round2(c.totalInterest))}</b></div>
+        <div><small>EMIs paid</small><b>${c.paidCount} / ${c.total}</b></div>
+        <div><small>Last EMI</small><b>${c.closing?fmtYM(c.closing.slice(0,7)):'—'}</b></div>
+      </div>
+      <div class="actions" style="align-items:center">${loanStatusPill(c)}${c.done?'':`<button class="btn primary" onclick="payEmi(${L.id})">Pay EMI</button><button class="btn" onclick="prepayLoan(${L.id})">Prepay</button>`}<button class="btn" onclick="editLoan(${L.id})">Edit</button><button class="btn danger" onclick="deleteLoan(${L.id})">Delete</button></div>
+      ${c.done?'':`<details class="hist" data-dkey="sim-${L.id}" ontoggle="rememberDetails(this)"${dOpen('sim-'+L.id)}><summary>💡 What if I pay extra?</summary><div class="sim"><input class="inp" type="number" min="0" step="1000" inputmode="decimal" placeholder="One-time amount now" value="${esc(s.lump||'')}" oninput="simInput(${L.id},'lump',this.value)"><input class="inp" type="number" min="0" step="500" inputmode="decimal" placeholder="Extra every month" value="${esc(s.extra||'')}" oninput="simInput(${L.id},'extra',this.value)"><button class="btn primary" onclick="runLoanSim(${L.id})">Calculate</button></div><div class="sim-out" id="sim-out-${L.id}">${s.out||''}</div></details>`}
+      <details class="hist" data-dkey="sched-${L.id}" ontoggle="rememberDetails(this)"${dOpen('sched-'+L.id)}><summary>📋 EMI schedule (${c.total} EMIs)</summary><div class="sched-wrap"><table class="sched"><thead><tr><th>#</th><th>Date</th><th>EMI</th><th>Principal</th><th>Interest</th><th>Balance</th><th></th></tr></thead><tbody>${sched}</tbody></table></div></details>
+      ${hist?`<details class="hist" data-dkey="hist-${L.id}" ontoggle="rememberDetails(this)"${dOpen('hist-'+L.id)}><summary>🧾 Payments recorded (${L.payments.length})${L.paidBefore?` · ${L.paidBefore} paid before tracking`:''}</summary><ul>${hist}</ul></details>`:''}
+    </div>`
+  }).join('')||'<p class="muted">📉 No loans yet — add a home, car, bike, personal or gold loan above.</p>';
+  $('loanSummary').innerHTML=state.loans.length?`<div class="card"><small>Total Outstanding</small><div class="amount expense">${money(round2(totalOut))}</div></div><div class="card"><small>Monthly EMIs</small><div class="amount">${money(round2(monthly))}</div></div><div class="card"><small>Interest Paid So Far</small><div class="amount balance">${money(round2(intPaid))}</div></div>`:''
+}
+// unpaid EMIs that are overdue or due within the reminder window (for dashboard + notifications)
+function pendingEmiItems(){
+  let out=[];
+  for(let L of state.loans){
+    let c=loanCalc(L);
+    for(let row of c.inst){
+      if(row.paid)continue;
+      let diff=daysFromToday(row.date);if(diff>REMINDER_LEAD_DAYS)break;
+      out.push({date:row.date,loan:L,row,html:`<div class="row"><b>📉 ${esc(L.name)} <span class="muted" style="font-weight:500">EMI #${row.no}</span></b><span>${money(round2(row.emi))}</span><span>${formatDueDate(row.date)}</span><span class="pill ${diff<0?'overdue':''}" style="cursor:pointer" title="Tap to pay" onclick="payEmi(${L.id})">${remainingLabelFromDays(diff)}</span></div>`})
+    }
+  }
+  return out
+}
+function loanInsightTile(){
+  if(!state.loans.length)return'';
+  let out=0,monthly=0;for(let L of state.loans){let c=loanCalc(L);out+=c.outstanding;if(!c.done)monthly+=c.emi}
+  return`<div class="insight" style="cursor:pointer" onclick="show('loans')"><small>Loans outstanding</small><b class="expense">${money(round2(out))}</b><span class="delta muted">EMI ${money(round2(monthly))}/mo</span></div>`
+}
+
+// ---------- Search across everything ----------
+let searchResults=[],searchTimer=null;
+function onGlobalSearchInput(){clearTimeout(searchTimer);searchTimer=setTimeout(runGlobalSearch,150)}
+function searchIndex(){
+  let o=[];
+  state.income.forEach(x=>o.push({icon:'💰',type:'Income',tab:'income',row:'row-income-'+x.id,title:(x.cat||x.source||'Income')+(x.note?' — '+x.note:''),sub:formatDueDate(x.date)+' '+x.date.slice(0,4)+(x.account?' · '+accountName(x.account):''),amount:x.amount,cls:'income',date:x.date,hay:[x.date,x.cat,x.source,x.note,x.amount,accountName(x.account),'income']}));
+  state.expense.forEach(x=>o.push({icon:'💸',type:'Expense',tab:'expense',row:'row-expense-'+x.id,title:(x.cat||'Expense')+(x.note?' — '+x.note:''),sub:formatDueDate(x.date)+' '+x.date.slice(0,4)+(x.method?' · '+x.method:'')+(x.cardId?' · '+cardName(x.cardId):x.account?' · '+accountName(x.account):''),amount:x.amount,cls:'expense',date:x.date,hay:[x.date,x.cat,x.note,x.method,x.amount,accountName(x.account),x.cardId?cardName(x.cardId):'','expense']}));
+  state.dues.forEach(x=>o.push({icon:'📅',type:'Due',tab:'dues',row:'row-dues-'+x.id,title:x.name,sub:(FREQ_LABEL[x.frequency]||'Monthly')+' · day '+(x.days||[]).join(', '),amount:x.amount,cls:'',hay:[x.name,x.amount,'due bill']}));
+  state.creditcards.forEach(x=>o.push({icon:'💳',type:'Credit card',tab:'cards',row:'row-creditcards-'+x.id,title:x.cardName,sub:'Outstanding '+money(cardOutstanding(x)),amount:cardOutstanding(x),cls:'expense',hay:[x.cardName,'card credit']}));
+  state.loans.forEach(x=>{let c=loanCalc(x);o.push({icon:'📉',type:'Loan',tab:'loans',row:'row-loans-'+x.id,title:x.name,sub:(x.lender?x.lender+' · ':'')+'EMI '+money(round2(c.emi))+' · outstanding '+money(round2(c.outstanding)),amount:x.principal,cls:'',hay:[x.name,x.lender,x.principal,round2(c.emi),Math.round(c.emi),'loan emi']})});
+  state.advances.forEach(x=>o.push({icon:'🤝',type:'Advance',tab:'advances',row:'row-advances-'+x.id,title:x.person+(x.note?' — '+x.note:''),sub:(x.direction==='given'?'Lent':'Borrowed')+' · '+(x.status==='settled'?'Settled':'Pending '+money(advanceRemaining(x))),amount:x.amount,cls:x.direction==='given'?'income':'expense',date:x.createdAt?ymd(new Date(x.createdAt)):'',hay:[x.person,x.note,x.phone,x.amount,'advance']}));
+  state.notes.forEach(x=>o.push({icon:'📝',type:'Note',tab:'notes',row:'row-notes-'+x.id,title:x.title,sub:(x.content||'').slice(0,80),cls:'',date:x.date,hay:[x.title,x.content,'note']}));
+  state.documents.forEach(x=>o.push({icon:'📄',type:'Document',tab:'documents',row:'row-documents-'+x.id,title:x.title,sub:[x.tags,x.fileName].filter(Boolean).join(' · '),cls:'',date:x.dateAdded,hay:[x.title,x.tags,x.fileName,'document']}));
+  return o
+}
+function runGlobalSearch(){
+  let q=val('globalSearch').trim().toLowerCase(),panel=$('searchPanel');
+  if(!q){panel.classList.add('hidden');searchResults=[];return}
+  let tokens=q.split(/\s+/).map(t=>t.replace(/[₹,]/g,'')).filter(Boolean);
+  searchResults=searchIndex().filter(o=>{
+    let h=(o.hay.map(v=>String(v??'')).join(' ')+' '+(o.date?formatDueDate(o.date):'')).toLowerCase();
+    return tokens.every(t=>h.includes(t))
+  }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,60);
+  panel.classList.remove('hidden');
+  panel.innerHTML=`<div class="head-row"><b>${searchResults.length?searchResults.length+(searchResults.length===60?'+':'')+' result'+(searchResults.length===1?'':'s'):'No results'} for "${esc(val('globalSearch').trim())}"</b><button class="btn" onclick="clearGlobalSearch()">Close</button></div>`+
+    searchResults.map((o,i)=>`<div class="row sr" onclick="searchGo(${i})"><span class="ico">${o.icon}</span><span><b>${esc(o.title)}</b><br><span class="muted" style="font-size:12.5px">${esc(o.type)} · ${esc(o.sub)}</span></span>${o.amount!=null?`<b class="${o.cls}">${money(o.amount)}</b>`:'<span></span>'}</div>`).join('')
+}
+function clearGlobalSearch(){$('globalSearch').value='';runGlobalSearch()}
+function searchGo(i){
+  let o=searchResults[i];if(!o)return;
+  clearGlobalSearch();
+  if(o.tab==='income')clearFilters('i');if(o.tab==='expense')clearFilters('e');
+  show(o.tab);setTimeout(()=>focusRow(o.row),80)
+}
+function focusRow(id){let el=$(id);if(!el)return;el.scrollIntoView({behavior:'smooth',block:'center'});el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),2600)}
+document.addEventListener('keydown',e=>{
+  let t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable);
+  if(e.key==='/'&&!typing&&!isLocked()){e.preventDefault();$('globalSearch').focus()}
+  else if(e.key==='Escape'&&t===$('globalSearch'))clearGlobalSearch()
+});
+
+// ---------- Quick add (floating + button & home-screen shortcuts) ----------
+let qa={type:'expense',cat:'',method:'Cash'},qaCatList=[];
+const QA_METHODS=['Cash','UPI','Bank','Card'];
+function qaCats(type){
+  let list=type==='income'?meta.incomeCats:meta.expenseCats,cutoff=ymd(new Date(Date.now()-90*86400000)),freq={};
+  state[type].forEach(x=>{if(x.date>=cutoff){let c=x.cat||x.source;freq[c]=(freq[c]||0)+1}});
+  return list.slice().sort((a,b)=>(freq[b]||0)-(freq[a]||0)) // most-used first
+}
+function openQuickAdd(type){
+  if(isLocked())return;
+  let dlg=$('quickAdd');if(dlg.open)return;
+  qa={type:type||'expense',cat:'',method:localStorage.getItem('qaMethod')||'Cash'};
+  $('qaAmount').value='';$('qaNote').value='';$('qaDate').value=today();
+  fillSelect($('qaCard'),state.creditcards.map(c=>({value:String(c.id),label:c.cardName})),state.creditcards.length?'— Which card? —':'No cards added');
+  $('qaCard').value=localStorage.getItem('qaCard')||'';
+  renderQuickAdd();$('qaAccount').value=localStorage.getItem('qaAccount-'+qa.type)||'';
+  dlg.showModal();setTimeout(()=>$('qaAmount').focus(),60)
+}
+function setQaType(t){qa.type=t;qa.cat='';renderQuickAdd();$('qaAccount').value=localStorage.getItem('qaAccount-'+t)||''}
+function qaPick(kind,i){if(kind==='cat')qa.cat=qaCatList[i];else qa.method=QA_METHODS[i];renderQuickAdd()}
+function renderQuickAdd(){
+  document.querySelectorAll('#quickAdd [data-qtype]').forEach(b=>b.classList.toggle('on',b.dataset.qtype===qa.type));
+  qaCatList=qaCats(qa.type);if(!qa.cat||!qaCatList.includes(qa.cat))qa.cat=qaCatList[0]||'';
+  $('qaCats').innerHTML=qaCatList.map((c,i)=>`<button type="button" class="chip-btn ${c===qa.cat?'on':''}" onclick="qaPick('cat',${i})">${esc(c)}</button>`).join('');
+  let isExp=qa.type==='expense';
+  $('qaMethods').innerHTML=isExp?QA_METHODS.map((m,i)=>`<button type="button" class="chip-btn ${m===qa.method?'on':''}" onclick="qaPick('method',${i})">${m}</button>`).join(''):'';
+  $('qaMethods').classList.toggle('hidden',!isExp);
+  let showCard=isExp&&qa.method==='Card',showAcc=meta.accounts.length&&!showCard;
+  $('qaCard').classList.toggle('hidden',!showCard);
+  let accSel=$('qaAccount');
+  fillSelect(accSel,meta.accounts.map(a=>({value:a.id,label:a.name})),'— No account —');
+  accSel.classList.toggle('hidden',!showAcc);
+  accSel.parentElement.classList.toggle('hidden',!showCard&&!showAcc)
+}
+async function saveQuickAdd(){
+  let amount=parseAmount(val('qaAmount'));if(!amount){$('qaAmount').focus();return}
+  let type=qa.type,date=val('qaDate')||today(),note=val('qaNote').trim(),account=val('qaAccount'),obj;
+  if(type==='expense'){
+    let method=qa.method,cardId=method==='Card'?(+val('qaCard')||null):null;
+    if(method==='Card'&&state.creditcards.length&&!cardId){$('qaCard').focus();return alert('Pick which card you paid with.')}
+    obj={date,amount,cat:qa.cat,method,note,account:method==='Card'?'':(meta.accounts.length?account:''),cardId};
+    localStorage.setItem('qaMethod',method);if(cardId)localStorage.setItem('qaCard',String(cardId))
+  }else obj={date,amount,cat:qa.cat,note,account:meta.accounts.length?account:''};
+  if(obj.account!==undefined)localStorage.setItem('qaAccount-'+type,obj.account||'');
+  let id=await save(type,obj);
+  $('quickAdd').close();
+  await refreshAndSync();
+  let undo=()=>deleteWithTombstone(type,id).then(refreshAndSync);
+  let msg=`${money(amount)} · ${obj.cat} saved`;
+  if(type==='expense')checkBudget(obj.cat,date,()=>toast(msg,{undo}));else toast(msg,{undo})
+}
+
+// ---------- Home-screen shortcut / link actions (?quick=expense, ?quick=income, ?search=1, ?tab=dues) ----------
+let pendingAction=null;
+function handleUrlAction(){
+  let p=new URLSearchParams(location.search),fn=null;
+  if(p.get('quick'))fn=()=>openQuickAdd(p.get('quick')==='income'?'income':'expense');
+  else if(p.has('search'))fn=()=>$('globalSearch').focus();
+  else if(p.get('tab')){let t=p.get('tab');if($(t)&&$(t).tagName==='SECTION')fn=()=>show(t)}
+  if(!fn)return;
+  history.replaceState(null,'',location.pathname);
+  if(isLocked())pendingAction=fn;else fn() // wait for the PIN if the app is locked
+}
+
 // ---------- Start-up ----------
 (async()=>{
   await openDB();
   $('iDate').value=today();$('eDate').value=today();$('month').value=thisYM();$('dueStart').value=thisYM();$('rStart').value=thisYM();
   onRecurTypeChange();
+  $('loanStart').value=today();
   await refresh();
   resetIncomeForm();resetExpenseForm();
+  handleUrlAction();
   refreshNotifStatus();refreshPinUI();requestPersistence();refreshSyncUI();
   setupServiceWorker();
   if(navigator.onLine)await syncNow(); // pull other devices' changes before logging recurring entries

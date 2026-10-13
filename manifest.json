@@ -1,1 +1,45 @@
-{"name":"My Finance - Offline","short_name":"My Finance","start_url":"./","display":"standalone","background_color":"#f4f7fb","theme_color":"#2563eb","description":"Offline income, expense and monthly dues manager","icons":[]}
+{
+  "name": "Daily Tracker",
+  "short_name": "Daily Tracker",
+  "description": "Personal finance manager — income, expenses, dues, cards, loans and advances",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f1f4fa",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add expense",
+      "short_name": "Expense",
+      "description": "Quickly log an expense",
+      "url": "./index.html?quick=expense",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Add income",
+      "short_name": "Income",
+      "description": "Quickly log income",
+      "url": "./index.html?quick=income",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Search",
+      "short_name": "Search",
+      "description": "Search everything",
+      "url": "./index.html?search=1",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Loans & EMIs",
+      "short_name": "Loans",
+      "description": "See loans and pay an EMI",
+      "url": "./index.html?tab=loans",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
