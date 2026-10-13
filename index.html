@@ -290,7 +290,7 @@ canvas{max-width:100%}
 <div class="section"><h2>📊 This month at a glance</h2><div id="dashInsights" class="insight-grid" style="margin-top:8px"></div></div>
 </section>
 
-<section id="income" class="hidden"><div class="section"><div class="head-row"><div><h2>💰 Add Income</h2></div><button class="btn sm" onclick="openQuickAdd('income',{paste:true})">📋 From SMS</button></div>
+<section id="income" class="hidden"><a class="tg-card" style="margin:0 0 12px" href="https://t.me/Vijaytracker_bot" target="_blank" rel="noopener"><span class="tg-ico">✈️</span><span class="tg-text"><b>Add by Telegram</b><small>Type <code>+45000 salary</code> to add income</small></span><span class="btn sm">Open</span></a><div class="section"><div class="head-row"><div><h2>💰 Add Income</h2></div><button class="btn sm" onclick="openQuickAdd('income',{paste:true})">📋 From SMS</button></div>
 <div class="fa">
 <input id="iAmount" class="fa-amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ Amount" onkeydown="if(event.key==='Enter'){event.preventDefault();addIncome()}">
 <div class="fa-label">Category</div><div id="iCatChips" class="chips"></div>
@@ -302,7 +302,7 @@ canvas{max-width:100%}
 </div></div>
 <div class="section"><div class="head-row"><h2>📜 History</h2><button class="btn sm" onclick="toggleFilters('i')">⚙️ Filters</button></div><input id="iSearch" class="inp" style="margin-top:10px" placeholder="🔍 Search income…" oninput="renderIncomeList()"><div id="iFilters" class="filters hidden"><select id="iFCat" onchange="renderIncomeList()"></select><label class="fld"><span>From</span><input id="iFrom" type="date" onchange="renderIncomeList()"></label><label class="fld"><span>To</span><input id="iTo" type="date" onchange="renderIncomeList()"></label><input id="iMin" type="number" placeholder="Min ₹" oninput="renderIncomeList()"><input id="iMax" type="number" placeholder="Max ₹" oninput="renderIncomeList()"><button class="btn" onclick="clearFilters('i')">Clear filters</button></div><div id="iTotal" class="filter-total muted"></div><div id="incomeList" class="list"></div></div></section>
 
-<section id="expense" class="hidden"><div class="section"><div class="head-row"><div><h2>💸 Add Expense</h2><div id="eTodayTotal" class="muted" style="font-size:12.5px"></div></div><button class="btn sm" onclick="openQuickAdd('expense',{paste:true})">📋 From SMS</button></div>
+<section id="expense" class="hidden"><a class="tg-card" style="margin:0 0 12px" href="https://t.me/Vijaytracker_bot" target="_blank" rel="noopener"><span class="tg-ico">✈️</span><span class="tg-text"><b>Add by Telegram</b><small>Type <code>tea 30</code> to add an expense</small></span><span class="btn sm">Open</span></a><div class="section"><div class="head-row"><div><h2>💸 Add Expense</h2><div id="eTodayTotal" class="muted" style="font-size:12.5px"></div></div><button class="btn sm" onclick="openQuickAdd('expense',{paste:true})">📋 From SMS</button></div>
 <div class="fa">
 <div id="eRepeatWrap" class="hidden"><div class="fa-label" style="margin-bottom:8px">⚡ One tap — add again</div><div id="eRepeat" class="chips"></div></div>
 <input id="eAmount" class="fa-amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ Amount" onkeydown="if(event.key==='Enter'){event.preventDefault();addExpense()}">
