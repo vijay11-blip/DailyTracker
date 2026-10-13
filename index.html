@@ -135,14 +135,68 @@ table.sched tr.pre td{color:var(--income);font-style:italic}
 .sim-out{margin-top:10px;font-size:13.5px;line-height:1.55}
 .sim-out .opt{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:8px}
 .loan-preview{grid-column:1/-1;font-size:13px}
+.top{position:sticky;top:0;z-index:40;background:var(--bg);padding:10px 0;margin:-10px 0 8px;align-items:center}
+.top h1{font-size:22px}
+.top-left{display:flex;flex-direction:column;min-width:0}
+#pageSub{font-size:12.5px}
+.icon-btn{border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow);width:42px;height:42px;border-radius:12px;font-size:18px;cursor:pointer}
+.searchbar{display:flex;gap:8px;margin-bottom:12px}
+.searchbar .gsearch{flex:1;width:auto}
+.btn.sm{padding:7px 11px;font-size:12.5px;min-height:0;white-space:nowrap}
+.fld{display:grid;gap:5px}
+.fld>span{font-size:12px;font-weight:700;color:var(--muted)}
+.fld select,.fld input{padding:11px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);width:100%;font-size:15px;font-family:inherit;background:var(--surface-2);color:var(--text)}
+.help{font-size:12.5px;margin:8px 0 0;line-height:1.45}
+details.addbox{background:var(--surface);border:1.5px dashed var(--brand);border-radius:var(--radius-lg);margin-top:12px;padding:0 16px}
+details.addbox>summary{list-style:none;cursor:pointer;padding:14px 0;font-weight:700;color:var(--brand-dark);font-size:15px}
+details.addbox>summary::-webkit-details-marker{display:none}
+details.addbox[open]{border-style:solid;border-color:var(--border);box-shadow:var(--shadow);padding-bottom:16px}
+details.addbox[open]>summary{color:var(--text)}
+details.addbox.inner{margin-top:12px;background:var(--surface-2)}
+details.addbox .form{grid-template-columns:1fr;margin-top:0}
+details.addbox .form button{padding:13px;font-size:15px}
+.cards.trio{display:flex;gap:8px}
+.cards.trio>.card{flex:1;min-width:0;padding:12px}
+.cards.trio .card small{font-size:10.5px;letter-spacing:.03em}
+.cards.trio .amount{font-size:17px;margin-top:4px;overflow-wrap:anywhere}
+.day-head{display:flex;justify-content:space-between;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:14px 2px 6px;border-bottom:1px solid var(--border)}
+.tx{display:grid;grid-template-columns:38px 1fr auto;gap:10px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:8px}
+.tx:active{background:var(--surface-2)}
+.tx-ico{width:38px;height:38px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:19px;flex:0 0 auto}
+.tx-main{min-width:0}
+.tx-main b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-main small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-amt{font-size:14.5px;white-space:nowrap}
+.show-more{width:100%;margin-top:10px}
+.item{padding:12px 2px;border-bottom:1px solid var(--border)}
+.item:last-child{border-bottom:0}
+.item-top{display:flex;align-items:center;gap:10px}
+.item-main{flex:1;min-width:0}
+.item-main b{display:block;font-size:15px}
+.item-main small{display:block;color:var(--muted);font-size:12.5px}
+.item-amt{font-size:15px;white-space:nowrap}
+.more-btn{background:var(--surface-2);border:1px solid var(--border);width:38px;height:38px;border-radius:10px;font-size:18px;font-weight:800;cursor:pointer;color:var(--muted);flex:0 0 auto;line-height:1}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.pills:empty{display:none}
+.sub-entry{display:flex;gap:8px;align-items:center;padding:9px 10px;margin-top:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
+.sub-entry .se-main{flex:1;min-width:0;font-size:13.5px}
+.sub-entry small{display:block;color:var(--muted);font-size:12px}
+.as-btns{display:grid;gap:8px;margin-top:14px}
+.as-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:12px;padding:14px;font-size:15px;font-weight:600;text-align:left;cursor:pointer}
+.as-btn.danger{color:var(--expense)}
+.plan-seg{grid-template-columns:repeat(4,1fr);margin-bottom:2px}
+.plan-seg button{font-size:12px;padding:9px 2px}
+.filters .fld>span{font-size:11px}
 .bottom-nav{display:none}
+
 .fa{display:grid;gap:12px;margin-top:12px}
 .fa .chips{margin:0;gap:7px}
 .fa .chip-btn{padding:7px 10px}
 .fa-amount{font-size:28px;font-weight:800;text-align:center;padding:12px;border:1.5px solid var(--border);border-radius:12px;background:var(--surface-2);color:var(--text);width:100%;font-family:inherit}
 .fa-amount:focus{outline:none;border-color:var(--brand);background:var(--surface)}
 .fa-label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:-6px}
-.fa-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fa-row{display:flex;gap:8px}
+.fa-row>*{flex:1;min-width:0}
 .fa-actions{display:flex;gap:8px}
 .fa-save{flex:1;padding:14px;font-size:15px}
 .repeat-chip{border:1.5px dashed var(--brand);background:var(--brand-soft);color:var(--brand-dark);border-radius:12px;padding:7px 11px;font-size:13px;font-weight:700;cursor:pointer;text-align:left;line-height:1.25}
@@ -156,7 +210,7 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.5)}
 .more-grid button{border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:14px;padding:14px 6px;font-size:13px;font-weight:600;cursor:pointer;display:grid;gap:6px;justify-items:center}
 .more-grid button span{font-size:24px}
 .more-grid button.active{border-color:var(--brand);background:var(--brand-soft);color:var(--brand-dark)}
-@media(display-mode:standalone){.top-right .btn{display:none}}
+@media(display-mode:standalone){.install-sec{display:none}}
 canvas{max-width:100%}
 @media(prefers-color-scheme:dark){
   :root:not([data-theme="light"]){--bg:#0b1220;--surface:#131b2c;--surface-2:#182236;--border:#25304a;--text:#eef2ff;--muted:#94a3b8;--muted-2:#64748b;--brand-soft:#1b2547;--income-soft:#0f2a1c;--expense-soft:#33161a;--warn-soft:#3a2a0d}
@@ -167,7 +221,6 @@ canvas{max-width:100%}
   .wide{grid-column:span 2}
   .row{grid-template-columns:1fr 1fr}
   .row .actions{grid-column:1/-1}
-  .top{align-items:flex-start;gap:10px;flex-direction:column}
   .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;justify-content:flex-start}
   .tabs::-webkit-scrollbar{display:none}
   .tabs button{flex:0 0 auto;white-space:nowrap}
@@ -177,7 +230,6 @@ canvas{max-width:100%}
   .filters input:first-child{grid-column:1/-1}
   .budget-row{grid-template-columns:1fr auto}
   .budget-row .bar{grid-column:1/-1;grid-row:2}
-  .top-right{width:100%}
   .gsearch{flex:1;width:auto;font-size:16px}
   .toast{bottom:92px}
   .sim{grid-template-columns:1fr 1fr}
@@ -196,7 +248,6 @@ canvas{max-width:100%}
   .badge{position:absolute;top:0;left:54%;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--expense);color:#fff;font-size:10.5px;font-style:normal;font-weight:800;line-height:17px;text-align:center}
   .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
   .app{padding-bottom:calc(100px + env(safe-area-inset-bottom))}
-  .top{margin-bottom:14px}
 }
 @media print{
   .tabs,.top button,#backupBanner,#reports .backup button,.toast,.update-bar,.fab,.top-right,.bottom-nav{display:none!important}
@@ -211,23 +262,36 @@ canvas{max-width:100%}
 <div id="lock" class="lock hidden"><form class="lock-box" onsubmit="event.preventDefault();unlock()"><div style="font-size:34px">🔒</div><b style="font-size:18px">Daily Tracker is locked</b><input id="lockPin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" maxlength="8"><button class="btn primary" type="submit">Unlock</button><p id="lockMsg" class="muted" style="margin:0;min-height:18px"></p></form></div>
 <div id="updateBar" class="update-bar hidden"><span>A new version of the app is ready.</span><button onclick="applyUpdate()">Reload</button></div>
 <main class="app">
-<div class="top"><div><h1>Daily Tracker</h1><span class="muted">Personal Finance Manager</span></div><div class="top-right"><input id="globalSearch" class="gsearch" type="search" placeholder="🔍 Search everything…" autocomplete="off" oninput="onGlobalSearchInput()"><button class="btn" onclick="installApp()">Install</button></div></div>
+<div class="top"><div class="top-left"><h1 id="pageTitle">Daily Tracker</h1><span id="pageSub" class="muted"></span></div><div class="top-right"><button class="icon-btn" title="Search" aria-label="Search" onclick="toggleSearch()">🔍</button></div></div>
+<div id="searchBar" class="searchbar hidden"><input id="globalSearch" class="gsearch" type="search" placeholder="Search expenses, dues, people, notes…" autocomplete="off" oninput="onGlobalSearchInput()"><button class="btn" onclick="toggleSearch(false)">Cancel</button></div>
 <div class="tabs"><button data-tab="dash" class="active" onclick="show('dash')">📊 Dashboard</button><button data-tab="income" onclick="show('income')">💰 Income</button><button data-tab="expense" onclick="show('expense')">💸 Expenses</button><button data-tab="dues" onclick="show('dues')">📅 Dues</button><button data-tab="cards" onclick="show('cards')">💳 Credit Cards</button><button data-tab="loans" onclick="show('loans')">📉 Loans</button><button data-tab="advances" onclick="show('advances')">🤝 Advances</button><button data-tab="plan" onclick="show('plan')">🎯 Plan</button><button data-tab="documents" onclick="show('documents')">📄 Documents</button><button data-tab="notes" onclick="show('notes')">📝 Notes</button><button data-tab="reports" onclick="show('reports')">📈 Reports</button><button data-tab="settings" onclick="show('settings')">⚙️ Settings</button></div>
 <div id="searchPanel" class="section hidden" style="margin:0 0 14px"></div>
 
 <section id="dash">
-<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24"><b style="color:var(--warn)">⚠ Back up your data</b><p class="muted" id="lastBackupText" style="margin:6px 0">—</p><p class="muted" style="margin:0 0 10px">Clearing Chrome's "Cookies and site data" deletes this device's copy permanently — export a backup regularly.</p><button class="btn primary" onclick="exportData()">Export Backup Now</button></div>
-<div class="head-row" style="margin-bottom:12px"><span class="muted" id="dashPeriodNote"></span><select id="dashPeriod" onchange="render()"><option value="month">This month</option><option value="all">All time</option></select></div>
-<div class="cards"><div class="card"><small id="dIncomeLabel">Income</small><div id="dIncome" class="amount income">₹0</div></div><div class="card"><small id="dExpenseLabel">Expense</small><div id="dExpense" class="amount expense">₹0</div></div><div class="card"><small id="dBalanceLabel">Balance</small><div id="dBalance" class="amount balance">₹0</div></div></div>
-<div id="dashInsights" class="insight-grid"></div>
-<div id="dashAccountsWrap" class="section hidden"><h2>🏦 Accounts</h2><div id="dashAccounts" class="insight-grid"></div></div>
+<div id="syncWarn" class="section hidden" style="border:1px solid var(--expense);font-size:13.5px;margin-top:0;margin-bottom:12px"></div>
+<div id="backupBanner" class="section hidden" style="border:1px solid #fbbf24;margin-top:0;margin-bottom:12px"><b style="color:var(--warn)">⚠ Back up your data</b> <span class="muted" id="lastBackupText">—</span><div style="margin-top:8px"><button class="btn primary" onclick="exportData()">Export Backup Now</button></div></div>
+<div class="head-row" style="margin-bottom:10px"><span class="muted" id="dashPeriodNote"></span><select id="dashPeriod" onchange="render()"><option value="month">This month</option><option value="all">All time</option></select></div>
+<div class="cards trio"><div class="card"><small id="dIncomeLabel">Income</small><div id="dIncome" class="amount income">₹0</div></div><div class="card"><small id="dExpenseLabel">Spent</small><div id="dExpense" class="amount expense">₹0</div></div><div class="card"><small id="dBalanceLabel">Saved</small><div id="dBalance" class="amount balance">₹0</div></div></div>
+<div class="section"><h2>⏰ Coming up &amp; overdue</h2><div id="dashDues" class="list"></div></div>
 <div id="dashBudgetsWrap" class="section hidden"><h2>🎯 Budgets — this month</h2><div id="dashBudgets"></div></div>
-<div class="section"><h2>⏰ Upcoming / Pending Dues</h2><div id="dashDues" class="list"></div></div></section>
+<div class="section"><div class="head-row"><h2>🧾 Recent spending</h2><button class="btn sm" onclick="show('expense')">See all</button></div><div id="dashRecent" class="list"></div></div>
+<div id="dashAccountsWrap" class="section hidden"><h2>🏦 Accounts</h2><div id="dashAccounts" class="insight-grid"></div></div>
+<div class="section"><h2>📊 This month at a glance</h2><div id="dashInsights" class="insight-grid" style="margin-top:8px"></div></div>
+</section>
 
-<section id="income" class="hidden"><div class="section"><div class="head-row"><h2>💰 Add Income</h2><button class="btn" onclick="openQuickAdd('income',{paste:true})">📋 From bank SMS</button></div><div class="form"><input id="iDate" type="date"><input id="iAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"><select id="iCat"></select><select id="iAccount"></select><input id="iNote" class="wide" placeholder="Description"><button id="iSaveBtn" onclick="addIncome()">Save Income</button><button id="iCancelEdit" class="btn hidden" onclick="resetIncomeForm()">Cancel Edit</button></div></div>
-<div class="section"><h2>📜 Income History</h2><div class="filters"><input id="iSearch" placeholder="Search note, category…" oninput="renderIncomeList()"><select id="iFCat" onchange="renderIncomeList()"></select><input id="iFrom" type="date" title="From date" onchange="renderIncomeList()"><input id="iTo" type="date" title="To date" onchange="renderIncomeList()"><input id="iMin" type="number" placeholder="Min ₹" oninput="renderIncomeList()"><input id="iMax" type="number" placeholder="Max ₹" oninput="renderIncomeList()"><button class="btn" onclick="clearFilters('i')">Clear</button></div><div id="iTotal" class="filter-total muted"></div><div id="incomeList" class="list"></div></div></section>
+<section id="income" class="hidden"><div class="section"><div class="head-row"><div><h2>💰 Add Income</h2></div><button class="btn sm" onclick="openQuickAdd('income',{paste:true})">📋 From SMS</button></div>
+<div class="fa">
+<input id="iAmount" class="fa-amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ Amount" onkeydown="if(event.key==='Enter'){event.preventDefault();addIncome()}">
+<div class="fa-label">Category</div><div id="iCatChips" class="chips"></div>
+<label class="fld"><span>Received in</span><select id="iAccount" class="inp"></select></label>
+<input id="iNote" class="inp" autocomplete="off" placeholder="Note (optional) — e.g. October salary" onkeydown="if(event.key==='Enter'){event.preventDefault();addIncome()}">
+<div class="fa-label">Date</div><div id="iDateChips" class="chips"><button type="button" class="chip-btn" data-d="today" onclick="setIDate('today')">Today</button><button type="button" class="chip-btn" data-d="yesterday" onclick="setIDate('yesterday')">Yesterday</button><input id="iDate" type="date" class="inp" style="width:auto;padding:7px 10px" onchange="renderIncomeFastForm()"></div>
+<select id="iCat" class="hidden"></select>
+<div class="fa-actions"><button id="iSaveBtn" class="btn primary fa-save" onclick="addIncome()">Save Income</button><button id="iCancelEdit" class="btn hidden" onclick="resetIncomeForm()">Cancel Edit</button></div>
+</div></div>
+<div class="section"><div class="head-row"><h2>📜 History</h2><button class="btn sm" onclick="toggleFilters('i')">⚙️ Filters</button></div><input id="iSearch" class="inp" style="margin-top:10px" placeholder="🔍 Search income…" oninput="renderIncomeList()"><div id="iFilters" class="filters hidden"><select id="iFCat" onchange="renderIncomeList()"></select><label class="fld"><span>From</span><input id="iFrom" type="date" onchange="renderIncomeList()"></label><label class="fld"><span>To</span><input id="iTo" type="date" onchange="renderIncomeList()"></label><input id="iMin" type="number" placeholder="Min ₹" oninput="renderIncomeList()"><input id="iMax" type="number" placeholder="Max ₹" oninput="renderIncomeList()"><button class="btn" onclick="clearFilters('i')">Clear filters</button></div><div id="iTotal" class="filter-total muted"></div><div id="incomeList" class="list"></div></div></section>
 
-<section id="expense" class="hidden"><div class="section"><div class="head-row"><div><h2>💸 Add Expense</h2><div id="eTodayTotal" class="muted" style="font-size:12.5px"></div></div><button class="btn" onclick="openQuickAdd('expense',{paste:true})">📋 From bank SMS</button></div>
+<section id="expense" class="hidden"><div class="section"><div class="head-row"><div><h2>💸 Add Expense</h2><div id="eTodayTotal" class="muted" style="font-size:12.5px"></div></div><button class="btn sm" onclick="openQuickAdd('expense',{paste:true})">📋 From SMS</button></div>
 <div class="fa">
 <div id="eRepeatWrap" class="hidden"><div class="fa-label" style="margin-bottom:8px">⚡ One tap — add again</div><div id="eRepeat" class="chips"></div></div>
 <input id="eAmount" class="fa-amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ Amount" onkeydown="if(event.key==='Enter'){event.preventDefault();addExpense()}">
@@ -240,36 +304,114 @@ canvas{max-width:100%}
 <select id="eCat" class="hidden"></select><select id="eMethod" class="hidden" onchange="onMethodChange()"><option>Cash</option><option>UPI</option><option>Bank</option><option>Card</option></select>
 <div class="fa-actions"><button id="eSaveBtn" class="btn primary fa-save" onclick="addExpense()">Save Expense</button><button id="eCancelEdit" class="btn hidden" onclick="resetExpenseForm()">Cancel Edit</button></div>
 </div></div>
-<div class="section"><h2>📜 Expense History</h2><div class="filters"><input id="eSearch" placeholder="Search note, category, method…" oninput="renderExpenseList()"><select id="eFCat" onchange="renderExpenseList()"></select><input id="eFrom" type="date" title="From date" onchange="renderExpenseList()"><input id="eTo" type="date" title="To date" onchange="renderExpenseList()"><input id="eMin" type="number" placeholder="Min ₹" oninput="renderExpenseList()"><input id="eMax" type="number" placeholder="Max ₹" oninput="renderExpenseList()"><button class="btn" onclick="clearFilters('e')">Clear</button></div><div id="eTotal" class="filter-total muted"></div><div id="expenseList" class="list"></div></div></section>
+<div class="section"><div class="head-row"><h2>📜 History</h2><button class="btn sm" onclick="toggleFilters('e')">⚙️ Filters</button></div><input id="eSearch" class="inp" style="margin-top:10px" placeholder="🔍 Search expenses…" oninput="renderExpenseList()"><div id="eFilters" class="filters hidden"><select id="eFCat" onchange="renderExpenseList()"></select><label class="fld"><span>From</span><input id="eFrom" type="date" onchange="renderExpenseList()"></label><label class="fld"><span>To</span><input id="eTo" type="date" onchange="renderExpenseList()"></label><input id="eMin" type="number" placeholder="Min ₹" oninput="renderExpenseList()"><input id="eMax" type="number" placeholder="Max ₹" oninput="renderExpenseList()"><button class="btn" onclick="clearFilters('e')">Clear filters</button></div><div id="eTotal" class="filter-total muted"></div><div id="expenseList" class="list"></div></div></section>
 
-<section id="dues" class="hidden"><div class="section"><h2>📅 Add Due</h2><div class="form"><input id="dueName" placeholder="Due name"><input id="dueAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"><input id="dueDay" placeholder="Due day(s), e.g. 5 or 5, 20"><select id="dueFreq"><option value="monthly">Every month</option><option value="quarterly">Every 3 months</option><option value="halfyearly">Every 6 months</option><option value="yearly">Every year</option></select><input id="dueStart" type="month" title="First due month"><button id="dueSaveBtn" onclick="addDue()">Save Due</button><button id="dueCancelEdit" class="btn hidden" onclick="resetDueForm()">Cancel Edit</button></div><p class="muted" style="margin-top:10px">The month box is the <b>first month</b> this bill is due — for quarterly/yearly bills (insurance, property tax) it sets which months it repeats in. A day like 31 automatically becomes the last day in shorter months. Unpaid bills from earlier months stay listed as overdue until you mark them paid.</p></div><div class="section"><h2>📅 Your Dues</h2><div id="dueList" class="list"></div></div></section>
+<section id="dues" class="hidden">
+<details class="addbox" id="dueAddBox"><summary>＋ Add a bill / due</summary><div class="form">
+<label class="fld"><span>Name</span><input id="dueName" placeholder="e.g. House rent, EB bill, LIC"></label>
+<label class="fld"><span>Amount</span><input id="dueAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹"></label>
+<label class="fld"><span>Due day of month</span><input id="dueDay" inputmode="numeric" placeholder="e.g. 5   (two days: 5, 20)"></label>
+<label class="fld"><span>Repeats</span><select id="dueFreq"><option value="monthly">Every month</option><option value="quarterly">Every 3 months</option><option value="halfyearly">Every 6 months</option><option value="yearly">Every year</option></select></label>
+<label class="fld"><span>First due month</span><input id="dueStart" type="month"></label>
+<button id="dueSaveBtn" onclick="addDue()">Save</button><button id="dueCancelEdit" class="btn hidden" onclick="resetDueForm()">Cancel</button>
+</div><p class="muted help">Tap a date pill to mark it paid — the amount is added to Expenses automatically. Tap again to undo.</p></details>
+<div class="section"><h2>📅 Your bills &amp; dues</h2><div id="dueList" class="list"></div></div></section>
 
-<section id="cards" class="hidden"><div class="cards" id="cardSummary" style="margin-bottom:14px"></div><div class="section"><h2>💳 Add Credit Card</h2><div class="form" oninput="cardFormPreview()"><input id="cardName" placeholder="Card name (e.g. HDFC Millennia)"><input id="cardLimit" type="number" min="0" placeholder="Credit limit (optional)"><input id="cardBalance" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Current bill amount"><input id="cardBillingDay" type="number" min="1" max="31" placeholder="Bill date (1-31)"><input id="cardCycleDays" type="number" min="1" max="60" placeholder="Days to pay (e.g. 20)"><input id="cardDueDay" type="number" min="1" max="31" placeholder="Or: due day (1-31)"><label class="muted" style="display:grid;gap:4px;font-size:12px;font-weight:600">This bill's due date<input id="cardStmtDue" type="date" onchange="this.dataset.touched='1'"></label><button id="cardSaveBtn" onclick="addCard()">Save Card</button><button id="cardCancelEdit" class="btn hidden" onclick="resetCardForm()">Cancel Edit</button><div id="cardPreview" class="loan-preview muted"></div></div><p class="muted" style="margin-top:10px">Enter the <b>bill date</b> + <b>days to pay</b> (e.g. bill on 14th, 20 days → due 4th), or just the <b>due day</b>. Expenses you log with <b>Card</b> are added as <b>unbilled spends</b> — they go on your next bill, so paying the current bill marks it paid. When the next bill comes, tap <b>🧾 New Bill</b>.</p></div><div class="section"><h2>💳 Your Cards</h2><div id="cardList" class="list"></div></div></section>
+<section id="cards" class="hidden"><div class="cards trio" id="cardSummary"></div>
+<details class="addbox" id="cardAddBox"><summary>＋ Add a credit card</summary><div class="form" oninput="cardFormPreview()">
+<label class="fld"><span>Card name</span><input id="cardName" placeholder="e.g. HDFC Millennia"></label>
+<label class="fld"><span>Credit limit (optional)</span><input id="cardLimit" type="number" min="0" inputmode="numeric" placeholder="₹"></label>
+<label class="fld"><span>Current bill amount</span><input id="cardBalance" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ from your last bill (0 if paid)"></label>
+<label class="fld"><span>Bill date (day)</span><input id="cardBillingDay" type="number" min="1" max="31" inputmode="numeric" placeholder="e.g. 14"></label>
+<label class="fld"><span>Days to pay after bill</span><input id="cardCycleDays" type="number" min="1" max="60" inputmode="numeric" placeholder="e.g. 20"></label>
+<label class="fld"><span>…or fixed due day</span><input id="cardDueDay" type="number" min="1" max="31" inputmode="numeric" placeholder="e.g. 4"></label>
+<label class="fld"><span>This bill's due date</span><input id="cardStmtDue" type="date" onchange="this.dataset.touched='1'"></label>
+<div id="cardPreview" class="loan-preview muted"></div>
+<button id="cardSaveBtn" onclick="addCard()">Save Card</button><button id="cardCancelEdit" class="btn hidden" onclick="resetCardForm()">Cancel</button>
+</div><p class="muted help">Fill <b>bill date + days to pay</b>, or just the <b>due day</b>. Card expenses go on your <b>next</b> bill. When a new bill comes, tap <b>🧾 New Bill</b>.</p></details>
+<div class="section"><h2>💳 Your cards</h2><div id="cardList" class="list"></div></div></section>
 
-<section id="loans" class="hidden"><div class="cards" id="loanSummary" style="margin-bottom:14px"></div><div class="section"><h2>📉 Add Loan</h2><div class="form" oninput="loanPreview()"><input id="loanName" placeholder="Loan name (e.g. Home loan)"><input id="loanLender" placeholder="Lender (optional)"><input id="loanPrincipal" type="number" min="0" step="1" inputmode="decimal" placeholder="Loan amount"><input id="loanRate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Interest % per year"><input id="loanTenure" type="number" min="1" step="1" inputmode="numeric" placeholder="Tenure"><select id="loanTenureUnit" onchange="loanPreview()"><option value="months">Months</option><option value="years">Years</option></select><input id="loanStart" type="date" title="First EMI date"><input id="loanEmi" type="number" min="0" step="0.01" inputmode="decimal" placeholder="EMI (optional)"><input id="loanPaidBefore" type="number" min="0" step="1" inputmode="numeric" placeholder="EMIs paid (optional)"><button id="loanSaveBtn" onclick="addLoan()">Save Loan</button><button id="loanCancelEdit" class="btn hidden" onclick="resetLoanForm()">Cancel Edit</button><div id="loanPreview" class="loan-preview muted"></div></div><p class="muted" style="margin-top:10px">The date box is your <b>first EMI date</b>. Leave "EMI" empty to use the standard reducing-balance EMI. For a loan you're already repaying, leave "EMIs paid" empty and every EMI dated before today is counted as paid (or type the exact number).</p></div><div class="section"><h2>📉 Your Loans</h2><div id="loanList" class="list"></div></div></section>
+<section id="loans" class="hidden"><div class="cards trio" id="loanSummary"></div>
+<details class="addbox" id="loanAddBox"><summary>＋ Add a loan</summary><div class="form" oninput="loanPreview()">
+<label class="fld"><span>Loan name</span><input id="loanName" placeholder="e.g. Home loan, Bike loan"></label>
+<label class="fld"><span>Lender (optional)</span><input id="loanLender" placeholder="e.g. SBI, Bajaj Finance"></label>
+<label class="fld"><span>Loan amount</span><input id="loanPrincipal" type="number" min="0" step="1" inputmode="decimal" placeholder="₹"></label>
+<label class="fld"><span>Interest % per year</span><input id="loanRate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="e.g. 9.5"></label>
+<label class="fld"><span>Tenure</span><div class="fa-row"><input id="loanTenure" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g. 5"><select id="loanTenureUnit" onchange="loanPreview()"><option value="years">Years</option><option value="months">Months</option></select></div></label>
+<label class="fld"><span>First EMI date</span><input id="loanStart" type="date"></label>
+<label class="fld"><span>EMI from bank (optional)</span><input id="loanEmi" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Leave empty to calculate"></label>
+<label class="fld"><span>EMIs already paid (optional)</span><input id="loanPaidBefore" type="number" min="0" step="1" inputmode="numeric" placeholder="Empty = all EMIs before today"></label>
+<div id="loanPreview" class="loan-preview muted"></div>
+<button id="loanSaveBtn" onclick="addLoan()">Save Loan</button><button id="loanCancelEdit" class="btn hidden" onclick="resetLoanForm()">Cancel</button>
+</div></details>
+<div class="section"><h2>📉 Your loans</h2><div id="loanList" class="list"></div></div></section>
 
-<section id="advances" class="hidden"><div class="cards" id="advanceSummary" style="margin-bottom:14px"></div><div class="section"><h2>🤝 Add Advance</h2><div class="form"><input id="advPerson" placeholder="Person's name"><input id="advPhone" type="tel" placeholder="WhatsApp number (optional)"><input id="advAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"><select id="advDirection"><option value="given">I gave (they owe me)</option><option value="taken">I took (I owe them)</option></select><input id="advDueDate" type="date" title="Repay by (optional)"><input id="advNote" class="wide" placeholder="Note (optional)"><button id="advSaveBtn" onclick="addAdvance()">Save Advance</button><button id="advCancelEdit" class="btn hidden" onclick="resetAdvanceForm()">Cancel Edit</button></div></div><div class="section"><h2>👥 By Person</h2><div id="advancePeople" class="list"></div></div><div class="section"><h2>🤝 All Advances</h2><div id="advanceList" class="list"></div></div></section>
-
-<section id="plan" class="hidden">
-<div class="section"><h2>🎯 Monthly Budgets</h2><p class="muted" style="margin:4px 0 8px">Set a monthly limit per expense category (leave blank for none). You'll get a warning at 80% and when you go over.</p><div id="budgetForm"></div><button class="btn primary" style="margin-top:10px" onclick="saveBudgets()">Save Budgets</button></div>
-<div class="section"><h2>🔁 Recurring Entries</h2><p class="muted" style="margin:4px 0 0">Salary, rent, SIPs, subscriptions — logged automatically on their day each month when you open the app.</p><div class="form"><select id="rType" onchange="onRecurTypeChange()"><option value="expense">Expense</option><option value="income">Income</option></select><input id="rAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"><select id="rCat"></select><select id="rMethod"><option>UPI</option><option>Bank</option><option>Cash</option><option>Card</option></select><select id="rAccount"></select><input id="rDay" type="number" min="1" max="31" placeholder="Day of month (1-31)"><input id="rStart" type="month" title="Start month"><input id="rNote" placeholder="Description (e.g. Rent)"><button onclick="addRecurring()">Save Recurring</button></div><div id="recurList" class="list" style="margin-top:12px"></div></div>
-<div class="section"><h2>🏦 Accounts</h2><p class="muted" style="margin:4px 0 0">Bank, cash and wallet balances. Balance = opening balance + income into it − expenses paid from it − card bills paid from it.</p><div class="form"><input id="accName" placeholder="Account name (e.g. SBI, Cash, Paytm)"><input id="accOpening" type="number" step="0.01" placeholder="Opening balance"><button onclick="addAccount()">Add Account</button></div><div id="accountList" class="list" style="margin-top:12px"></div></div>
-<div class="section"><h2>🏷️ Categories</h2><h3 style="margin-top:10px">Expense categories</h3><div id="expenseCatChips" class="chips"></div><div class="inline-add"><input id="newExpenseCat" class="inp" placeholder="New expense category"><button class="btn" onclick="addCategory('expense')">Add</button></div><h3 style="margin-top:16px">Income categories</h3><div id="incomeCatChips" class="chips"></div><div class="inline-add"><input id="newIncomeCat" class="inp" placeholder="New income category"><button class="btn" onclick="addCategory('income')">Add</button></div><p class="muted" style="margin-top:10px">Removing a category doesn't change past records.</p></div>
+<section id="advances" class="hidden"><div class="cards trio" id="advanceSummary"></div>
+<details class="addbox" id="advAddBox"><summary>＋ Add money lent / borrowed</summary><div class="form">
+<label class="fld"><span>Person</span><input id="advPerson" list="advPeopleList" autocomplete="off" placeholder="Name"><datalist id="advPeopleList"></datalist></label>
+<label class="fld"><span>Amount</span><input id="advAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹"></label>
+<label class="fld"><span>Type</span><select id="advDirection"><option value="given">I gave — they owe me</option><option value="taken">I took — I owe them</option></select></label>
+<label class="fld"><span>Repay by (optional)</span><input id="advDueDate" type="date"></label>
+<label class="fld"><span>WhatsApp number (optional)</span><input id="advPhone" type="tel" inputmode="tel" placeholder="98765 43210"></label>
+<label class="fld"><span>Note (optional)</span><input id="advNote" placeholder="e.g. Hospital"></label>
+<button id="advSaveBtn" onclick="addAdvance()">Save</button><button id="advCancelEdit" class="btn hidden" onclick="resetAdvanceForm()">Cancel</button>
+</div></details>
+<div class="section"><h2>👥 People</h2><div id="advancePeople" class="list"></div></div>
+<div id="advSettledWrap" class="section hidden"><details class="hist"><summary id="advSettledSum">✓ Settled</summary><div id="advanceList" class="list"></div></details></div>
 </section>
 
-<section id="documents" class="hidden"><div class="section"><h2>📄 Add Document</h2><div class="form"><input id="docFile" type="file" class="wide"><input id="docTitle" placeholder="Title"><input id="docTags" placeholder="Tags (optional)"><button onclick="addDocument()">Save Document</button></div><p class="muted" style="margin-top:10px">Files are stored only on this device (up to 20MB each) and are included in Export Backup, but are <b>not</b> sent through Google Sheets sync — sheets can't hold file data.</p></div><div class="section"><h2>📄 Saved Documents</h2><div id="documentList" class="list"></div></div></section>
+<section id="plan" class="hidden">
+<div class="seg plan-seg"><button data-plan="budgets" onclick="showPlan('budgets')">Budgets</button><button data-plan="recurring" onclick="showPlan('recurring')">Repeating</button><button data-plan="accounts" onclick="showPlan('accounts')">Accounts</button><button data-plan="cats" onclick="showPlan('cats')">Categories</button></div>
+<div class="section plan-pane" data-pane="budgets"><h2>🎯 Monthly budgets</h2><p class="muted help">Set a limit per category (blank = no limit). You're warned at 80% and when you go over.</p><div id="budgetForm"></div><button class="btn primary" style="margin-top:10px;width:100%" onclick="saveBudgets()">Save Budgets</button></div>
+<div class="section plan-pane" data-pane="recurring"><h2>🔁 Repeating entries</h2><p class="muted help">Rent, salary, SIP, recharge — added automatically every month on their day.</p><div id="recurList" class="list"></div>
+<details class="addbox inner" id="recurAddBox"><summary>＋ Add repeating entry</summary><div class="form">
+<label class="fld"><span>Type</span><select id="rType" onchange="onRecurTypeChange()"><option value="expense">Expense</option><option value="income">Income</option></select></label>
+<label class="fld"><span>Name</span><input id="rNote" placeholder="e.g. Rent, Jio recharge, Salary"></label>
+<label class="fld"><span>Amount</span><input id="rAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹"></label>
+<label class="fld"><span>Category</span><select id="rCat"></select></label>
+<label class="fld" id="rMethodWrap"><span>Paid by</span><select id="rMethod"><option>UPI</option><option>Bank</option><option>Cash</option><option>Card</option></select></label>
+<label class="fld"><span>Account</span><select id="rAccount"></select></label>
+<label class="fld"><span>Day of month</span><input id="rDay" type="number" min="1" max="31" inputmode="numeric" placeholder="e.g. 5"></label>
+<label class="fld"><span>Start month</span><input id="rStart" type="month"></label>
+<button onclick="addRecurring()">Save</button></div></details></div>
+<div class="section plan-pane" data-pane="accounts"><h2>🏦 Accounts</h2><p class="muted help">Bank, cash and wallet balances — updated by income and expenses you tag with the account.</p><div id="accountList" class="list"></div>
+<details class="addbox inner" id="accAddBox"><summary>＋ Add account</summary><div class="form">
+<label class="fld"><span>Account name</span><input id="accName" placeholder="e.g. SBI Savings, Cash, Paytm"></label>
+<label class="fld"><span>Balance today</span><input id="accOpening" type="number" step="0.01" inputmode="decimal" placeholder="₹"></label>
+<button onclick="addAccount()">Add Account</button></div></details></div>
+<div class="section plan-pane" data-pane="cats"><h2>🏷️ Categories</h2><h3 style="margin-top:10px">Expense</h3><div id="expenseCatChips" class="chips"></div><div class="inline-add"><input id="newExpenseCat" class="inp" placeholder="New expense category"><button class="btn" onclick="addCategory('expense')">Add</button></div><h3 style="margin-top:16px">Income</h3><div id="incomeCatChips" class="chips"></div><div class="inline-add"><input id="newIncomeCat" class="inp" placeholder="New income category"><button class="btn" onclick="addCategory('income')">Add</button></div><p class="muted help">Removing a category doesn't change past entries.</p></div>
+</section>
 
-<section id="notes" class="hidden"><div class="section"><h2>📝 Add Note</h2><div class="form" style="grid-template-columns:1fr"><input id="noteTitle" placeholder="Title"><textarea id="noteContent" placeholder="Write your note…" rows="4"></textarea><button id="noteSaveBtn" onclick="addNote()">Save Note</button><button id="noteCancelEdit" class="btn hidden" onclick="resetNoteForm()">Cancel Edit</button></div></div><div class="section"><h2>📝 Notes</h2><div id="noteList" class="list"></div></div></section>
+<section id="documents" class="hidden">
+<details class="addbox" id="docAddBox"><summary>＋ Add a document</summary><div class="form">
+<label class="fld"><span>File (photo or PDF)</span><input id="docFile" type="file"></label>
+<label class="fld"><span>Title</span><input id="docTitle" placeholder="e.g. Bike RC, Insurance policy"></label>
+<label class="fld"><span>Tags (optional)</span><input id="docTags" placeholder="e.g. bike, insurance"></label>
+<button onclick="addDocument()">Save Document</button></div><p class="muted help">Saved only on this phone (max 20 MB each) and included in Export Backup — not in Google Sheets.</p></details>
+<div class="section"><h2>📄 Documents</h2><div id="documentList" class="list"></div></div></section>
 
-<section id="reports" class="hidden"><div class="section"><h2>📈 Monthly Report</h2><div class="backup" style="align-items:center"><input id="month" type="month" onchange="report()" style="flex:1;min-width:140px;padding:11px;border:1.5px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text)"><button class="btn" onclick="exportReportCSV()">Export CSV</button><button class="btn" onclick="exportReportPDF()">Export PDF</button></div><div id="reportBox" class="summary" style="margin-top:18px"></div><div id="reportInsights" class="insight-grid"></div><div id="catBox" class="list"></div></div><div class="section"><h3>Expense by Category (chart)</h3><canvas id="catChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Income vs Expense — last 6 months</h3><canvas id="trendChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Savings Rate — last 6 months</h3><canvas id="savingsChart" style="width:100%;height:220px"></canvas></div></section>
+<section id="notes" class="hidden">
+<details class="addbox" id="noteAddBox"><summary>＋ Write a note</summary><div class="form">
+<input id="noteTitle" placeholder="Title"><textarea id="noteContent" placeholder="Write your note…" rows="5"></textarea>
+<button id="noteSaveBtn" onclick="addNote()">Save Note</button><button id="noteCancelEdit" class="btn hidden" onclick="resetNoteForm()">Cancel</button></div></details>
+<div class="section"><h2>📝 Notes</h2><div id="noteList" class="list"></div></div></section>
 
-<section id="settings" class="hidden"><div class="section"><h2>🔒 App Lock</h2><p class="muted">Ask for a PIN when the app opens or after it's been in the background for over a minute. This is a privacy screen for this device — it doesn't encrypt the data, and the PIN is never synced.</p><p id="pinStatus" class="muted">PIN: off</p><div class="backup"><button id="pinSetBtn" class="btn primary" onclick="setPin()">Set PIN</button><button id="pinRemoveBtn" class="btn danger hidden" onclick="removePin()">Remove PIN</button></div></div>
-<div class="section"><h2>🔄 Google Sheets Sync (two-way)</h2><p class="muted">Syncs automatically each time you open the app (when online), and you can also tap "Sync Now" anytime. To also sync budgets, recurring entries, accounts and categories, add an empty tab named <b>Meta</b> to your Sheet.</p><div class="form" style="grid-template-columns:1fr"><input id="gsScriptUrlInput" placeholder="Apps Script Web App URL"><input id="gsSyncTokenInput" placeholder="Secret token"><button onclick="saveScriptConfig()">Save</button></div><div class="backup" style="margin-top:10px"><button id="syncNowBtn" class="btn primary" onclick="syncNow()">Sync Now</button></div><p id="syncStatus" class="muted" style="margin-top:10px">Not set up yet</p></div><div class="section"><h2>🔒 Storage Safety</h2><p class="muted">This device keeps its own copy of your data in the browser. In Chrome, clearing <b>"Browsing history"</b> alone is safe, but clearing <b>"Cookies and other site data"</b> deletes this device's copy (documents aren't synced, so they'd be lost).</p><p id="persistStatus" class="muted">Storage protection: checking…</p><p class="muted">Export a backup regularly — it's the only complete safety net.</p></div><div class="section"><h2>🔔 Reminders</h2><p class="muted">Get a notification on this device when a due or card payment is coming up, or a budget is nearly used. These fire reliably whenever the app is open; while it's closed they only work on some Android/Chrome setups.</p><p id="notifStatus" class="muted">Status: checking…</p><button class="btn primary" onclick="enableNotifications()">Enable Reminders</button></div><div class="section"><h2>💾 Backup & Restore</h2><p class="muted">Export a backup before changing or clearing the device.</p><div class="backup"><button class="btn primary" onclick="exportData()">Export Backup</button><label class="btn">Import Backup <input id="importFile" type="file" accept=".json" hidden onchange="importData(event)"></label><button class="btn danger" onclick="clearAll()">Delete All Data</button></div></div></section>
+<section id="reports" class="hidden"><div class="section"><div class="head-row"><h2>📈 Monthly report</h2><input id="month" type="month" onchange="report()" class="inp" style="width:auto;padding:8px 10px"></div><div id="reportBox" class="cards trio" style="margin-top:12px"></div><div id="reportInsights" class="insight-grid"></div><div id="catBox" class="list"></div><div class="backup" style="margin-top:12px"><button class="btn" onclick="exportReportCSV()">⬇️ Export CSV</button><button class="btn" onclick="exportReportPDF()">🖨️ Save as PDF</button></div></div><div class="section"><h3>Spending by category</h3><canvas id="catChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Income vs spending — last 6 months</h3><canvas id="trendChart" style="width:100%;height:220px"></canvas></div><div class="section"><h3>Savings rate — last 6 months</h3><canvas id="savingsChart" style="width:100%;height:220px"></canvas></div></section>
+
+<section id="settings" class="hidden">
+<div class="section"><h2>🔄 Google Sheets sync</h2><p id="syncStatus" class="muted">Not set up yet</p><button id="syncNowBtn" class="btn primary" style="width:100%" onclick="syncNow(true)">Sync Now</button><details class="hist" style="margin-top:10px"><summary>Sync settings (URL &amp; token)</summary><div class="form" style="grid-template-columns:1fr"><input id="gsScriptUrlInput" placeholder="Apps Script Web App URL"><input id="gsSyncTokenInput" placeholder="Secret token"><button onclick="saveScriptConfig()">Save</button></div></details></div>
+<div class="section"><h2>💾 Backup</h2><p class="muted help" id="backupStatus">—</p><div class="backup"><button class="btn primary" onclick="exportData()">⬇️ Export Backup</button><label class="btn">⬆️ Restore Backup <input id="importFile" type="file" accept=".json" hidden onchange="importData(event)"></label></div><p class="muted help">Keep a backup file safe — clearing Chrome's "site data" deletes the app's copy on this phone.</p><p id="persistStatus" class="muted help">Storage protection: checking…</p></div>
+<div class="section"><h2>🔔 Reminders</h2><p id="notifStatus" class="muted">Status: checking…</p><p class="muted help">Notifications for bills, card payments, EMIs and budgets.</p><button class="btn primary" onclick="enableNotifications()">Enable Reminders</button></div>
+<div class="section"><h2>🔒 App lock</h2><p id="pinStatus" class="muted">PIN: off</p><p class="muted help">Asks for a PIN when you open the app. (A privacy screen — not encryption.)</p><div class="backup"><button id="pinSetBtn" class="btn primary" onclick="setPin()">Set PIN</button><button id="pinRemoveBtn" class="btn danger hidden" onclick="removePin()">Remove PIN</button></div></div>
+<div class="section install-sec"><h2>📲 Install app</h2><p class="muted help">Add Daily Tracker to your home screen as an app.</p><button class="btn" onclick="installApp()">Install App</button></div>
+<div class="section"><details class="hist"><summary style="color:var(--expense)">⚠️ Danger zone</summary><p class="muted help">Deletes everything on this phone. Export a backup first.</p><button class="btn danger" onclick="clearAll()">Delete All Data</button></details></div>
+</section>
 </main>
 <div id="toast" class="toast" hidden></div>
 <dialog id="modal" class="modal"></dialog>
 <dialog id="quickAdd" class="modal qa"><form onsubmit="event.preventDefault();saveQuickAdd()"><div class="seg"><button type="button" data-qtype="expense" onclick="setQaType('expense')">💸 Expense</button><button type="button" data-qtype="income" onclick="setQaType('income')">💰 Income</button></div><button type="button" class="btn" style="width:100%" onclick="pasteSms()">📋 Paste bank / UPI SMS</button><div id="qaSmsBox" class="hidden" style="display:grid;gap:8px"><textarea id="qaSmsText" class="inp" rows="3" placeholder="Long-press here → Paste the bank / GPay SMS" onpaste="setTimeout(()=>applySms(this.value),30)"></textarea><button type="button" class="btn primary" onclick="applySms(val('qaSmsText'))">Fill from SMS</button></div><div id="qaSmsInfo" class="sms-info hidden"></div><input id="qaAmount" class="qa-amount inp" type="number" min="0" step="0.01" inputmode="decimal" placeholder="₹ 0"><div id="qaCats" class="chips" style="margin:0"></div><div id="qaMethods" class="chips" style="margin:0"></div><div class="qa-row"><select id="qaCard" class="inp"></select><select id="qaAccount" class="inp"></select></div><input id="qaNote" class="inp" placeholder="Note (optional)" autocomplete="off"><input id="qaDate" class="inp" type="date"><div class="btns"><button type="button" class="btn" onclick="$('quickAdd').close()">Cancel</button><button type="submit" class="btn primary">Save</button></div></form></dialog>
 <button class="fab" onclick="openQuickAdd()" title="Quick add" aria-label="Quick add">+</button>
 <nav class="bottom-nav" aria-label="Main"><button data-nav="dash" class="active" onclick="show('dash')"><span class="ni">🏠</span>Home</button><button data-nav="expense" onclick="show('expense')"><span class="ni">💸</span>Expenses</button><button class="nav-add" onclick="openQuickAdd()" aria-label="Quick add"><span>+</span></button><button data-nav="dues" onclick="show('dues')"><span class="ni">📅</span>Dues<i id="navDuesBadge" class="badge hidden"></i></button><button data-nav="more" onclick="openMore()"><span class="ni">☰</span>More</button></nav>
+<dialog id="actionSheet" class="sheet" onclick="if(event.target===this)this.close()"><div class="sheet-inner"><div class="sheet-grab"></div><div id="asHead"></div><div id="asBtns" class="as-btns"></div><button class="btn" style="width:100%;margin-top:10px;padding:13px" onclick="$('actionSheet').close()">Cancel</button></div></dialog>
 <dialog id="moreSheet" class="sheet" onclick="if(event.target===this)this.close()"><div class="sheet-inner"><div class="sheet-grab"></div><div class="more-grid"><button data-more="income" onclick="moreGo('income')"><span>💰</span>Income</button><button data-more="cards" onclick="moreGo('cards')"><span>💳</span>Cards</button><button data-more="loans" onclick="moreGo('loans')"><span>📉</span>Loans</button><button data-more="advances" onclick="moreGo('advances')"><span>🤝</span>Advances</button><button data-more="plan" onclick="moreGo('plan')"><span>🎯</span>Plan</button><button data-more="reports" onclick="moreGo('reports')"><span>📈</span>Reports</button><button data-more="notes" onclick="moreGo('notes')"><span>📝</span>Notes</button><button data-more="documents" onclick="moreGo('documents')"><span>📄</span>Documents</button><button data-more="settings" onclick="moreGo('settings')"><span>⚙️</span>Settings</button></div><button class="btn" style="width:100%;margin-top:12px" onclick="$('moreSheet').close()">Close</button></div></dialog>
 <script src="app.js"></script></body></html>
