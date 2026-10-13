@@ -446,6 +446,7 @@ function renderDues(){
   let items=pendingDueOccurrences().map(o=>{let diff=daysFromToday(o.dateStr);return{date:o.dateStr,html:`<div class="row"><b>${esc(o.due.name)}</b><span>${money(o.due.amount)}</span><span>${formatDueDate(o.dateStr)}</span><span class="pill ${diff<0?'overdue':''}" style="cursor:pointer" title="Tap to mark paid" onclick="toggleDue(${o.due.id},'${o.ym}',${o.day})">${remainingLabelFromDays(diff)}</span></div>`}});
   items.push(...pendingEmiItems());
   items.sort((a,b)=>a.date.localeCompare(b.date));
+  updateNavBadge(items);
   $('dashDues').innerHTML=items.map(i=>i.html).join('')||'<p class="muted">✅ Nothing pending — you\'re all caught up!</p>'
 }
 
@@ -796,6 +797,8 @@ function renderDashInsights(){
 function show(id){
   document.querySelectorAll('main>section').forEach(x=>x.classList.toggle('hidden',x.id!==id));
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
+  updateBottomNav(id);
+  if(window.matchMedia&&matchMedia('(max-width:700px)').matches)window.scrollTo(0,0);
   if(id==='reports')report();
   if(id==='plan')renderPlan(true)
 }
@@ -1424,7 +1427,7 @@ function qaCats(type){
   state[type].forEach(x=>{if(x.date>=cutoff){let c=x.cat||x.source;freq[c]=(freq[c]||0)+1}});
   return list.slice().sort((a,b)=>(freq[b]||0)-(freq[a]||0)) // most-used first
 }
-function openQuickAdd(type){
+function openQuickAdd(type,opts={}){
   if(isLocked())return;
   let dlg=$('quickAdd');if(dlg.open)return;
   qa={type:type||'expense',cat:'',method:localStorage.getItem('qaMethod')||'Cash'};
@@ -1432,7 +1435,9 @@ function openQuickAdd(type){
   fillSelect($('qaCard'),state.creditcards.map(c=>({value:String(c.id),label:c.cardName})),state.creditcards.length?'— Which card? —':'No cards added');
   $('qaCard').value=localStorage.getItem('qaCard')||'';
   renderQuickAdd();$('qaAccount').value=localStorage.getItem('qaAccount-'+qa.type)||'';
-  dlg.showModal();setTimeout(()=>$('qaAmount').focus(),60)
+  $('qaSmsInfo').classList.add('hidden');$('qaSmsText').value='';qaShowSmsBox(false);
+  dlg.showModal();
+  if(opts.smsText)applySms(opts.smsText);else if(opts.paste)pasteSms();else setTimeout(()=>$('qaAmount').focus(),60)
 }
 function setQaType(t){qa.type=t;qa.cat='';renderQuickAdd();$('qaAccount').value=localStorage.getItem('qaAccount-'+t)||''}
 function qaPick(kind,i){if(kind==='cat')qa.cat=qaCatList[i];else qa.method=QA_METHODS[i];renderQuickAdd()}
@@ -1468,11 +1473,154 @@ async function saveQuickAdd(){
   if(type==='expense')checkBudget(obj.cat,date,()=>toast(msg,{undo}));else toast(msg,{undo})
 }
 
+// ---------- Bank / UPI SMS reader ----------
+// Reads the common Indian bank, card and UPI (GPay/PhonePe/Paytm/BHIM) message formats.
+const SMS_MONTHS={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+const SMS_BANKS=['hdfc','sbi','icici','axis','kotak','canara','indian bank','iob','indian overseas','pnb','punjab national','bob','baroda','union bank','idfc','yes bank','federal','au bank','au small','indusind','paytm','airtel','jupiter','onecard','amex','american express','citi','rbl','equitas','karur','kvb','tmb','tamilnad mercantile','city union','cub','dbs','hsbc','standard chartered','bandhan','central bank','uco','ujjivan'];
+function smsYear(y){y=+y;return y<100?2000+y:y}
+function smsValidDate(y,m,d){if(!(m>=0&&m<12&&d>=1&&d<=31))return null;let dt=new Date(y,m,d);return dt.getFullYear()===y&&dt.getMonth()===m&&dt.getDate()===d?dt:null}
+function parseSmsDate(t){
+  let m,c=[],now=new Date(),thisYear=now.getFullYear();
+  if((m=t.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/)))c.push(smsValidDate(+m[1],+m[2]-1,+m[3]));
+  if((m=t.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4}|\d{2})\b/)))c.push(smsValidDate(smsYear(m[3]),+m[2]-1,+m[1]));
+  if((m=t.match(/\b(\d{1,2})(?:st|nd|rd|th)?[\s\-\/]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[\s,\-\/]*('?\d{4}|'?\d{2})?(?!\d)/i)))
+    c.push(smsValidDate(m[3]?smsYear(m[3].replace("'","")):thisYear,SMS_MONTHS[m[2].toLowerCase()],+m[1]));
+  if((m=t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?\b/i)))
+    c.push(smsValidDate(m[3]?+m[3]:thisYear,SMS_MONTHS[m[1].toLowerCase()],+m[2]));
+  for(let d of c){if(d&&d-now<=86400000&&now-d<=400*86400000)return ymd(d)} // ignore impossible / far-off dates
+  return null
+}
+function parseSmsAmount(t){
+  let re=/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/gi,m;
+  while((m=re.exec(t))){
+    let before=t.slice(Math.max(0,m.index-25),m.index).toLowerCase();
+    if(/(bal|balance|limit|lmt|avl|avail|available)[^a-z0-9]*(is|of)?[^a-z0-9]*$/.test(before))continue; // skip "Avl Bal Rs 1,234"
+    let v=parseFloat(m[1].replace(/,/g,''));if(v>0)return Math.round(v*100)/100
+  }
+  m=t.match(/\b(?:debited|credited|spent|paid|sent|received|withdrawn|deposited)\s+(?:by|for|of|with|amount)?\s*(?:rs\.?|inr|₹)?\s*([\d,]*\d(?:\.\d{1,2})?)/i);
+  if(m){let v=parseFloat(m[1].replace(/,/g,''));if(v>0)return Math.round(v*100)/100}
+  return null
+}
+function cleanSmsMerchant(s){
+  s=String(s||'').trim().replace(/^(merchant|vpa|m\/s\.?|mr\.?|mrs\.?|ms\.?|shri|smt\.?)\s+/i,'').replace(/^(neft|imps|rtgs|upi|ach|nach)[\-\/:\s]+/i,'');
+  if(!s.includes('@'))s=s.split(/-(?=[A-Za-z])/)[0]; // "ACME TECH-SALARY SEP" -> "ACME TECH"
+  s=s.replace(/[\s.,\-:;*\/]+$/,'').trim();
+  if(!s||s.length<2)return'';
+  if(/^(rs|inr|₹)\b/i.test(s)||/^[\d.,\s]+$/.test(s))return'';
+  if(/^(your|you|a\/?c|ac|account|acct|xx+|x+\d+|\*+\d+|beneficiary|the|bank|card|upi|imps|neft|rtgs|mobile|linked|self|ref|date)\b/i.test(s))return'';
+  if(s.includes('@')){let u=s.split('@')[0];s=/^\d+$/.test(u)?s:u.replace(/[._\-]+/g,' ').trim()}
+  if(s===s.toUpperCase()||s===s.toLowerCase())s=s.toLowerCase().replace(/\b[a-z]/g,c=>c.toUpperCase());
+  return s.slice(0,40)
+}
+function parseSmsMerchant(t,type){
+  const END='(?=\\s*(?:\\(|\\bon\\b|\\bvia\\b|\\bref|\\bupi\\b|\\bavl|\\bavail|\\bif\\b|\\bnot\\b|\\bthru\\b|\\busing\\b|\\bfrom\\b|\\bdated\\b|\\.(?:\\s|$)|,|;|-\\s|$))';
+  const NAME="([A-Za-z0-9][A-Za-z0-9.\\-_@ &'*]{1,45}?)";
+  const pats=type==='income'
+    ?[new RegExp('\\bfrom\\s+(?:vpa\\s+)?'+NAME+END,'gi'),new RegExp('\\bby\\s+(?:vpa\\s+)?'+NAME+END,'gi'),new RegExp('\\binfo[:\\s]+'+NAME+END,'gi')]
+    :[new RegExp('\\bat\\s+'+NAME+END,'gi'),new RegExp('\\bto\\s+(?:vpa\\s+)?'+NAME+END,'gi'),new RegExp('\\btowards\\s+'+NAME+END,'gi'),
+      /[;.]\s*([A-Za-z][A-Za-z0-9 .&'\-]{1,40}?)\s+credited\b/gi,new RegExp('\\binfo[:\\s]+'+NAME+END,'gi')];
+  pats.push(/\bvpa\s*:?\s*([\w.\-]+@[\w.\-]+)/gi);
+  for(let re of pats)for(let m of t.matchAll(re)){let s=cleanSmsMerchant(m[1]);if(s)return s}
+  return''
+}
+function parseBankSms(text){
+  let t=String(text||'').replace(/\s+/g,' ').trim(),low=t.toLowerCase();
+  let amount=parseSmsAmount(t);
+  let dm=low.search(/\b(debited|debit|spent|paid|sent|withdrawn|purchase|payment of|txn of|transferred|deducted)\b/);
+  let cm=low.search(/\b(credited|credit(?!\s*card)|received|deposited|refund(ed)?|cashback|added to)\b/);
+  let type=cm>=0&&(dm<0||cm<dm)?'income':'expense';
+  let isAtm=/\batm\b/.test(low)&&/withdr/.test(low);
+  let method='';
+  if(/\b(upi|vpa|gpay|google ?pay|phonepe|paytm|bhim)\b/.test(low))method='UPI';
+  else if(isAtm)method='Cash';
+  else if(/debit ?card/.test(low))method='Bank';
+  else if(/\bcard\b/.test(low))method='Card';
+  else if(/\b(neft|imps|rtgs|a\/c|acct|account)\b/.test(low))method='Bank';
+  let last4=(t.match(/(?:\bx+|\*+|ending(?:\s*in|\s*with)?\s*|\bno\.?\s*x*)(\d{3,4})\b/i)||[])[1]||'';
+  let bank=SMS_BANKS.find(b=>new RegExp('\\b'+b.replace(/ /g,'\\s*')+'\\b','i').test(low))||'';
+  let merchant=isAtm?'ATM withdrawal':parseSmsMerchant(t,type);
+  return{amount,type,date:parseSmsDate(t),merchant,method,last4,bank,isAtm,raw:t}
+}
+// Category guess: your own past entries first, then common Indian merchants.
+const SMS_CAT_HINTS=[
+  ['Tea Shop',/\btea\b|chai|coffee|tea stall|bakery/],
+  ['Petrol',/petrol|fuel|hpcl|bpcl|iocl|indian ?oil|bharat ?petroleum|hindustan ?petroleum|\bshell\b|filling|service station|hp pay/],
+  ['Grocery',/bigbasket|blinkit|zepto|dmart|d mart|grocer|supermarket|\bmart\b|instamart|jiomart|kirana|provision|reliance fresh|more retail|nilgiris|vegetable|fruits/],
+  ['Food',/swiggy|zomato|restaurant|hotel|cafe|domino|kfc|mcdonald|pizza|biryani|eatery|food|kitchen|\bmess\b|dhaba|sweets|bhavan|saravana|a2b|adyar ananda/],
+  ['Bills',/electric|tneb|tangedco|eb bill|airtel|\bjio\b|vodafone|\bvi\b|bsnl|recharge|broadband|\bdth\b|tata ?play|sun direct|\bbill|\bgas\b|lpg|indane|bharatgas|water|insurance|\blic\b|act fibernet/],
+  ['EMI',/\bemi\b|loan|bajaj fin|home credit/],
+  ['Home',/\brent\b|maintenance|furniture|ikea|pepperfry|hardware|electricals/]
+];
+function guessSmsCategory(type,merchant,text){
+  let list=type==='income'?meta.incomeCats:meta.expenseCats;
+  const pick=name=>list.find(c=>c.toLowerCase()===String(name).toLowerCase())||'';
+  let mlow=String(merchant||'').toLowerCase();
+  if(mlow&&mlow!=='atm withdrawal'){
+    let prev=state[type].slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).find(x=>(x.note||'').toLowerCase().startsWith(mlow));
+    if(prev&&pick(prev.cat||prev.source))return pick(prev.cat||prev.source)
+  }
+  let low=(mlow+' '+String(text||'')).toLowerCase();
+  if(type==='income'){
+    if(/salary|\bsal\b|payroll/.test(low))return pick('Salary');
+    if(/interest/.test(low))return pick('Interest');
+    if(/refund|cashback|reversal/.test(low))return pick('Other');
+    return''
+  }
+  for(let[cat,re]of SMS_CAT_HINTS)if(re.test(mlow)&&pick(cat))return pick(cat);
+  for(let[cat,re]of SMS_CAT_HINTS)if(re.test(low)&&pick(cat))return pick(cat);
+  return''
+}
+
+function qaShowSmsBox(show){$('qaSmsBox').classList.toggle('hidden',!show);if(show)setTimeout(()=>$('qaSmsText').focus(),80)}
+async function pasteSms(){
+  // read the clipboard directly when the browser allows it; otherwise show a box to paste into
+  try{if(navigator.clipboard&&navigator.clipboard.readText){let t=await navigator.clipboard.readText();if(t&&parseSmsAmount(t)){applySms(t);return}}}catch(e){}
+  qaShowSmsBox(true)
+}
+function applySms(text){
+  let info=$('qaSmsInfo'),r=parseBankSms(text);
+  if(!$('quickAdd').open)return openQuickAdd(r.type,{smsText:text});
+  info.classList.remove('hidden');
+  if(!r.amount){info.innerHTML='<span class="expense">Couldn\'t find an amount in that message — paste the full bank / UPI SMS.</span>';qaShowSmsBox(true);return}
+  qaShowSmsBox(false);$('qaSmsText').value='';
+  qa.type=r.type;qa.cat='';
+  if(r.type==='expense'&&r.method)qa.method=r.method;
+  let guess=guessSmsCategory(r.type,r.merchant,r.raw);if(guess)qa.cat=guess;
+  renderQuickAdd();
+  $('qaAmount').value=r.amount;$('qaDate').value=r.date||today();$('qaNote').value=r.merchant||'';
+  // pick the account / card whose name mentions the bank or the last 4 digits
+  let match=name=>(r.last4&&String(name).includes(r.last4))||(r.bank&&String(name).toLowerCase().includes(r.bank));
+  let acc=meta.accounts.find(a=>match(a.name));
+  $('qaAccount').value=acc?acc.id:(localStorage.getItem('qaAccount-'+qa.type)||'');
+  if(qa.method==='Card'){let c=state.creditcards.find(c=>match(c.cardName));if(c)$('qaCard').value=String(c.id)}
+  let date=val('qaDate');
+  let dup=state[qa.type].find(x=>Math.abs(x.amount-r.amount)<0.01&&x.date===date&&(!r.merchant||(x.note||'').toLowerCase().includes(r.merchant.toLowerCase())));
+  info.innerHTML=`✅ Filled from SMS: <b>${money(r.amount)}</b> ${r.type==='income'?'received':'spent'}${r.merchant?' · '+esc(r.merchant):''} · ${formatDueDate(date)}${r.date?'':' (no date in SMS — using today)'}${guess?'':' · <b>pick a category</b>'} — check and tap Save.`
+    +(r.isAtm?'<br><span class="muted">ATM cash withdrawal — you may prefer to log what you spend the cash on instead.</span>':'')
+    +(dup?`<br><span class="expense">⚠ Looks like this is already added (${money(dup.amount)} on ${formatDueDate(dup.date)}${dup.note?' — '+esc(dup.note):''}).</span>`:'')
+}
+
+// ---------- Mobile bottom tab bar ----------
+const NAV_MAIN=['dash','expense','dues'];
+function updateBottomNav(id){
+  document.querySelectorAll('.bottom-nav [data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===id||(b.dataset.nav==='more'&&!NAV_MAIN.includes(id))));
+  document.querySelectorAll('#moreSheet [data-more]').forEach(b=>b.classList.toggle('active',b.dataset.more===id))
+}
+function openMore(){let d=$('moreSheet');if(!d.open&&!isLocked())d.showModal()}
+function moreGo(id){$('moreSheet').close();show(id)}
+function updateNavBadge(items){
+  let n=items.filter(i=>daysFromToday(i.date)<=3).length,b=$('navDuesBadge');
+  b.textContent=n>9?'9+':n;b.classList.toggle('hidden',!n)
+}
+
 // ---------- Home-screen shortcut / link actions (?quick=expense, ?quick=income, ?search=1, ?tab=dues) ----------
 let pendingAction=null;
 function handleUrlAction(){
   let p=new URLSearchParams(location.search),fn=null;
-  if(p.get('quick'))fn=()=>openQuickAdd(p.get('quick')==='income'?'income':'expense');
+  // Android "Share" from the Messages app arrives as ?text=… (manifest share_target)
+  if(p.get('text')||p.get('title')){let txt=[p.get('title'),p.get('text'),p.get('url')].filter(Boolean).join(' ');fn=()=>openQuickAdd('expense',{smsText:txt})}
+  else if(p.get('quick')==='sms')fn=()=>openQuickAdd('expense',{paste:true});
+  else if(p.get('quick'))fn=()=>openQuickAdd(p.get('quick')==='income'?'income':'expense');
   else if(p.has('search'))fn=()=>$('globalSearch').focus();
   else if(p.get('tab')){let t=p.get('tab');if($(t)&&$(t).tagName==='SECTION')fn=()=>show(t)}
   if(!fn)return;
