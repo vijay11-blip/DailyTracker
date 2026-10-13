@@ -58,6 +58,7 @@ function saveMeta(touch=true){if(touch)meta.updatedAt=Date.now();try{localStorag
 function metaChanged(){saveMeta();render();renderPlan(false);scheduleSync()}
 
 // ---------- Toast + modal ----------
+function warn(msg){toast(msg,{type:'warn',ms:5000})}
 let toastTimer=null;
 function toast(msg,{undo=null,action=null,actionText='Undo',type='',ms=6000}={}){
   let el=$('toast');clearTimeout(toastTimer);
@@ -95,7 +96,7 @@ async function confirmModal(message,okText='OK',danger=false){return!!(await mod
 function accountOptions(){return[{value:'',label:'Not set'},...meta.accounts.map(a=>({value:a.id,label:a.name}))]}
 
 // ---------- IndexedDB ----------
-function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','loans','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;db.onversionchange=()=>{db.close();location.reload()};res()};r.onblocked=()=>alert('Daily Tracker is updating its storage. Please close any other open Daily Tracker tabs/windows, then reopen the app.');r.onerror=()=>rej(r.error)})}
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;['income','expense','dues','creditcards','advances','loans','notes','documents','tombstones'].forEach(x=>{if(!d.objectStoreNames.contains(x))d.createObjectStore(x,{keyPath:'id',autoIncrement:true})})};r.onsuccess=()=>{db=r.result;db.onversionchange=()=>{db.close();location.reload()};res()};r.onblocked=()=>warn('Daily Tracker is updating its storage. Please close any other open Daily Tracker tabs/windows, then reopen the app.');r.onerror=()=>rej(r.error)})}
 function all(store){return new Promise((res,rej)=>{let r=db.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function putExact(store,obj){return new Promise((res,rej)=>{let tx=db.transaction(store,'readwrite').objectStore(store);let r=obj.id?tx.put(obj):tx.add(obj);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function save(store,obj){obj.updatedAt=Date.now();if(!obj.createdAt)obj.createdAt=obj.updatedAt;return putExact(store,obj)}
@@ -247,6 +248,7 @@ function filterRows(rows,p,fields,catOf){
     (isNaN(min)||x.amount>=min)&&(isNaN(max)||x.amount<=max)
   ).sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0))
 }
+function setFilterBtn(p,act){let b=document.querySelector(`[onclick="toggleFilters('${p}')"]`);if(b){let n=['FCat','From','To','Min','Max'].filter(k=>val(p+k)).length;b.textContent=n?`⚙️ Filters (${n})`:'⚙️ Filters';b.classList.toggle('primary',!!n)}}
 function filtersActive(p){return['Search','FCat','From','To','Min','Max'].some(k=>val(p+k))}
 function clearFilters(p){['Search','FCat','From','To','Min','Max'].forEach(k=>$(p+k).value='');p==='i'?renderIncomeList():renderExpenseList()}
 
@@ -276,7 +278,7 @@ function editIncome(id){
 }
 function renderIncomeList(){
   let rows=filterRows(state.income,'i',x=>[x.date,x.cat||x.source,x.note,accountName(x.account),dayLabel(x.date)],x=>x.cat||x.source);
-  let act=filtersActive('i');
+  let act=filtersActive('i');setFilterBtn('i',act);
   $('iTotal').textContent=rows.length?`${rows.length} entr${rows.length===1?'y':'ies'} · Total ${money(sum(rows))}${act?' (filtered)':''}`:'';
   let shown=rows.slice(0,listLimit.i);
   $('incomeList').innerHTML=(shown.length?txRowsHtml(shown,'income'):`<p class="muted">${act?'No income matches.':'💰 No income yet — add your first one above.'}</p>`)
@@ -294,9 +296,9 @@ function resetExpenseForm(){
   editingExpenseId=null;$('eSaveBtn').textContent='Save Expense';$('eCancelEdit').classList.add('hidden');onMethodChange();renderExpenseFastForm()
 }
 async function addExpense(){
-  let amount=parseAmount(val('eAmount'));if(!amount)return alert('Enter an amount greater than 0');
+  let amount=parseAmount(val('eAmount'));if(!amount)return warn('Enter an amount greater than 0');
   let method=val('eMethod'),cardId=method==='Card'?(+val('eCard')||null):null;
-  if(method==='Card'&&state.creditcards.length&&!cardId)return alert('Pick which card this was paid with (or choose another payment method).');
+  if(method==='Card'&&state.creditcards.length&&!cardId)return warn('Pick which card this was paid with (or choose another payment method).');
   let existing=editingExpenseId?state.expense.find(r=>r.id===editingExpenseId):null;
   let obj={...(existing||{}),date:val('eDate')||today(),amount,cat:val('eCat'),method,note:val('eNote').trim(),account:method==='Card'?'':val('eAccount'),cardId};
   let id=await save('expense',obj);
@@ -379,7 +381,7 @@ async function deleteExpense(id){
 }
 function renderExpenseList(){
   let rows=filterRows(state.expense,'e',x=>[x.date,x.cat,x.note,x.method,accountName(x.account),x.cardId?cardName(x.cardId):'',dayLabel(x.date)],x=>x.cat);
-  let act=filtersActive('e');
+  let act=filtersActive('e');setFilterBtn('e',act);
   $('eTotal').textContent=rows.length?`${rows.length} expense${rows.length===1?'':'s'} · Total ${money(sum(rows))}${act?' (filtered)':''}`:'';
   let shown=rows.slice(0,listLimit.e);
   $('expenseList').innerHTML=(shown.length?txRowsHtml(shown,'expense'):`<p class="muted">${act?'No expenses match.':'💸 No expenses yet — add your first one above.'}</p>`)
@@ -430,7 +432,7 @@ function parseDays(str){return[...new Set(String(str).split(',').map(s=>parseInt
 function resetDueForm(){$('dueName').value='';$('dueAmount').value='';$('dueDay').value='';$('dueFreq').value='monthly';$('dueStart').value=thisYM();editingDueId=null;$('dueSaveBtn').textContent='Save';$('dueCancelEdit').classList.add('hidden');closeBox('dueAddBox')}
 async function addDue(){
   let name=val('dueName').trim(),amount=parseAmount(val('dueAmount')),days=parseDays(val('dueDay'));
-  if(!name||!amount||!days.length)return alert('Enter due name, an amount greater than 0 and at least one valid due day (1-31, comma-separated for more than one)');
+  if(!name||!amount||!days.length)return warn('Enter due name, an amount greater than 0 and at least one valid due day (1-31, comma-separated for more than one)');
   let existing=editingDueId?state.dues.find(d=>d.id===editingDueId):null;
   // keep payment history + links on edit (previously lost, which orphaned auto-logged expenses)
   let obj={...(existing||{}),name,amount,days,frequency:val('dueFreq')||'monthly',startYM:val('dueStart')||thisYM(),
@@ -574,14 +576,14 @@ function cardFormPreview(){
 }
 async function addCard(){
   let cardName=val('cardName').trim(),balStr=val('cardBalance'),balance=+balStr,limit=val('cardLimit')?+val('cardLimit'):null,f=cardFromForm();
-  if(!cardName||balStr==='')return alert('Enter card name and current bill amount (0 is fine)');
-  if(isNaN(balance)||balance<0)return alert('Bill amount must be 0 or more');
-  if(!f.cycleDays&&!f.dueDay)return alert('Enter either a Due day, or a Billing day + days until due');
-  if(f.dueDay!=null&&(f.dueDay<1||f.dueDay>31))return alert('Due day must be between 1 and 31');
-  if(f.billingDay!=null&&(f.billingDay<1||f.billingDay>31))return alert('Billing day must be between 1 and 31');
-  if(f.cycleDays&&!f.billingDay)return alert('"Days until due" needs a Billing day to count from');
-  if(f.cycleDays!=null&&(f.cycleDays<1||f.cycleDays>60))return alert('Days until due is usually 15–25');
-  if(limit!=null&&limit<0)return alert('Credit limit can\'t be negative');
+  if(!cardName||balStr==='')return warn('Enter card name and current bill amount (0 is fine)');
+  if(isNaN(balance)||balance<0)return warn('Bill amount must be 0 or more');
+  if(!f.cycleDays&&!f.dueDay)return warn('Enter either a Due day, or a Billing day + days until due');
+  if(f.dueDay!=null&&(f.dueDay<1||f.dueDay>31))return warn('Due day must be between 1 and 31');
+  if(f.billingDay!=null&&(f.billingDay<1||f.billingDay>31))return warn('Billing day must be between 1 and 31');
+  if(f.cycleDays&&!f.billingDay)return warn('"Days until due" needs a Billing day to count from');
+  if(f.cycleDays!=null&&(f.cycleDays<1||f.cycleDays>60))return warn('Days until due is usually 15–25');
+  if(limit!=null&&limit<0)return warn('Credit limit can\'t be negative');
   let existing=editingCardId?state.creditcards.find(c=>c.id===editingCardId):null;
   let obj={...(existing||{}),cardName,balance,limit,...f,dueDay:f.dueDay||f.billingDay,payments:existing?.payments||[]};
   if(!existing){
@@ -612,7 +614,7 @@ async function addCardPayment(id){
   let msg=`Bill: ${money(Math.max(left,0))} left${left>0?' — due '+formatDueDate(cardStmtDue(x)):''}`+(cardUnbilled(x)>0?` · Unbilled spends: ${money(cardUnbilled(x))}`:'')+(x.minDue&&left>0?` · Minimum due ${money(x.minDue)}`:'');
   let r=await modal({title:'Payment — '+x.cardName,message:msg,fields,okText:'Save Payment'});
   if(!r)return;
-  let amt=parseAmount(r.amount);if(!amt)return alert('Enter a valid positive amount.');
+  let amt=parseAmount(r.amount);if(!amt)return warn('Enter a valid positive amount.');
   if(amt>total+0.01&&!await confirmModal(`That's ${money(amt-total)} more than everything you owe on this card (${money(total)}). Record it anyway?`,'Record'))return;
   x.payments=x.payments||[];x.payments.push({date:r.date||today(),amount:amt,account:r.account||''});
   await save('creditcards',x);refreshAndSync();
@@ -628,9 +630,9 @@ async function newStatement(id){
     {name:'billDate',label:'Bill / statement date',type:'date',value:billDate},
     {name:'due',label:'Payment due date',type:'date',value:computeCardDue(x,billDate)}],okText:'Save new bill'});
   if(!r)return;
-  let newBal=+r.bal;if(r.bal===''||isNaN(newBal)||newBal<0)return alert('Enter a valid amount (0 or more).');
+  let newBal=+r.bal;if(r.bal===''||isNaN(newBal)||newBal<0)return warn('Enter a valid amount (0 or more).');
   let bd=r.billDate||today();
-  if(r.due&&r.due<bd)return alert('The due date can\'t be before the bill date.');
+  if(r.due&&r.due<bd)return warn('The due date can\'t be before the bill date.');
   // payments made AFTER the bill date already count towards this new bill; older ones are archived
   let pays=x.payments||[];
   x.pastPayments=[...(x.pastPayments||[]),...pays.filter(p=>p.date<=bd&&p.account)];
@@ -697,15 +699,15 @@ function accountBalance(a){
   return(+a.opening||0)+inc-exp-cardPay
 }
 function addAccount(){
-  let name=val('accName').trim();if(!name)return alert('Enter an account name');
-  if(meta.accounts.some(a=>a.name.toLowerCase()===name.toLowerCase()))return alert('An account with that name already exists');
+  let name=val('accName').trim();if(!name)return warn('Enter an account name');
+  if(meta.accounts.some(a=>a.name.toLowerCase()===name.toLowerCase()))return warn('An account with that name already exists');
   let opening=parseFloat(val('accOpening'))||0;
   meta.accounts.push({id:uid(),name,opening});$('accName').value='';$('accOpening').value='';closeBox('accAddBox');metaChanged();toast('Account added')
 }
 async function editAccount(id){
   let a=meta.accounts.find(a=>a.id===id);if(!a)return;
   let r=await modal({title:'Edit account',fields:[{name:'name',label:'Name',value:a.name},{name:'opening',label:'Opening balance',type:'number',step:'0.01',value:a.opening}],okText:'Save'});
-  if(!r)return;if(!r.name.trim())return alert('Name can\'t be empty');
+  if(!r)return;if(!r.name.trim())return warn('Name can\'t be empty');
   a.name=r.name.trim();a.opening=parseFloat(r.opening)||0;metaChanged()
 }
 async function deleteAccount(id){
@@ -724,8 +726,8 @@ function renderAccounts(){
 // ---------- Recurring entries ----------
 function addRecurring(){
   let type=val('rType'),amount=parseAmount(val('rAmount')),day=parseInt(val('rDay'),10),cat=val('rCat');
-  if(!amount)return alert('Enter an amount greater than 0');
-  if(!(day>=1&&day<=31))return alert('Enter a day of month between 1 and 31');
+  if(!amount)return warn('Enter an amount greater than 0');
+  if(!(day>=1&&day<=31))return warn('Enter a day of month between 1 and 31');
   let startYM=val('rStart')||thisYM();
   meta.recurring.push({id:uid(),type,amount,cat,method:type==='expense'?val('rMethod'):'',account:val('rMethod')==='Card'&&type==='expense'?'':val('rAccount'),day,startYM,note:val('rNote').trim(),lastYM:addMonths(startYM,-1),active:true});
   ['rAmount','rDay','rNote'].forEach(k=>$(k).value='');closeBox('recurAddBox');
@@ -775,12 +777,12 @@ function renderRecurList(){
 function addCategory(type){
   let inp=$(type==='income'?'newIncomeCat':'newExpenseCat'),name=inp.value.trim();if(!name)return;
   let list=type==='income'?meta.incomeCats:meta.expenseCats;
-  if(list.some(c=>c.toLowerCase()===name.toLowerCase()))return alert('That category already exists');
+  if(list.some(c=>c.toLowerCase()===name.toLowerCase()))return warn('That category already exists');
   list.push(name);inp.value='';metaChanged();renderBudgetForm()
 }
 function removeCategory(type,idx){
   let list=type==='income'?meta.incomeCats:meta.expenseCats;
-  if(list.length<=1)return alert('Keep at least one category');
+  if(list.length<=1)return warn('Keep at least one category');
   let [name]=list.splice(idx,1);metaChanged();renderBudgetForm();
   toast(`Category "${name}" removed`,{undo:()=>{list.splice(idx,0,name);metaChanged();renderBudgetForm()}})
 }
@@ -798,7 +800,7 @@ function advanceRemaining(x){return x.amount-sum(x.payments||[])}
 function personKey(n){return String(n||'').trim().toLowerCase()}
 async function addAdvance(){
   let person=val('advPerson').trim(),amount=parseAmount(val('advAmount')),direction=val('advDirection');
-  if(!person||!amount)return alert('Enter person and an amount greater than 0');
+  if(!person||!amount)return warn('Enter person and an amount greater than 0');
   let existing=editingAdvanceId?state.advances.find(a=>a.id===editingAdvanceId):null;
   // reuse the phone number already saved for this person if none entered
   let phone=val('advPhone').trim()||(state.advances.find(a=>personKey(a.person)===personKey(person)&&a.phone)||{}).phone||'';
@@ -836,7 +838,7 @@ async function addAdvancePayment(id){
   let remaining=advanceRemaining(x);
   let r=await modal({title:x.direction==='given'?`${x.person} paid you back`:`You paid ${x.person} back`,message:'Remaining: '+money(remaining),fields:[{name:'amount',label:'Amount',type:'number',step:'0.01',inputmode:'decimal',value:''},{name:'date',label:'Date',type:'date',value:today()}],okText:'Save'});
   if(!r)return;
-  let amt=parseAmount(r.amount);if(!amt)return alert('Enter a valid positive amount.');
+  let amt=parseAmount(r.amount);if(!amt)return warn('Enter a valid positive amount.');
   if(amt>remaining+0.001&&!await confirmModal(`That's more than the remaining ${money(remaining)}. Record it anyway?`,'Record'))return;
   x.payments=x.payments||[];x.payments.push({date:r.date||today(),amount:amt});
   if(advanceRemaining(x)<=0){x.status='settled';x.settledDate=r.date||today()}
@@ -879,7 +881,7 @@ function renderAdvances(){
 let editingNoteId=null;
 function resetNoteForm(){$('noteTitle').value='';$('noteContent').value='';editingNoteId=null;$('noteSaveBtn').textContent='Save Note';$('noteCancelEdit').classList.add('hidden');closeBox('noteAddBox')}
 async function addNote(){
-  let title=val('noteTitle').trim();if(!title)return alert('Enter a title');
+  let title=val('noteTitle').trim();if(!title)return warn('Enter a title');
   let existing=editingNoteId?state.notes.find(n=>n.id===editingNoteId):null;
   let obj={...(existing||{}),title,content:val('noteContent'),date:today()};
   await save('notes',obj);resetNoteForm();refreshAndSync();toast(existing?'Note updated':'Note saved')
@@ -897,8 +899,8 @@ function revokeDocumentUrl(id){if(documentUrlCache.has(id)){URL.revokeObjectURL(
 function revokeAllDocumentUrls(){for(let url of documentUrlCache.values())URL.revokeObjectURL(url);documentUrlCache.clear()}
 async function addDocument(){
   let fileInput=$('docFile'),file=fileInput.files[0];
-  if(!file)return alert('Choose a file first');
-  if(file.size>20*1024*1024)return alert('File too large for on-device storage (20MB limit).');
+  if(!file)return warn('Choose a file first');
+  if(file.size>20*1024*1024)return warn('File too large for on-device storage (20MB limit).');
   let title=val('docTitle').trim()||file.name;
   await save('documents',{title,tags:val('docTags'),fileName:file.name,fileType:file.type,blob:file,dateAdded:today()});
   fileInput.value='';$('docTitle').value='';$('docTags').value='';closeBox('docAddBox');
@@ -1027,10 +1029,10 @@ let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTi
 function notifStatusText(){if(!('Notification'in window))return'Not supported in this browser';return{granted:'Enabled',denied:'Blocked — allow notifications for this app in your browser/OS settings',default:'Not enabled yet'}[Notification.permission]}
 function refreshNotifStatus(){$('notifStatus').textContent='Status: '+notifStatusText()}
 async function enableNotifications(){
-  if(!('Notification'in window))return alert('Notifications are not supported in this browser.');
+  if(!('Notification'in window))return warn('Notifications are not supported in this browser.');
   let perm=await Notification.requestPermission();refreshNotifStatus();
   if(perm==='granted'){checkDueNotifications();tryPeriodicSync();toast('Reminders enabled')}
-  else if(perm==='denied')alert('Notifications are blocked. Enable them from your browser or system app settings to get reminders.')
+  else if(perm==='denied')warn('Notifications are blocked. Enable them from your browser or system app settings to get reminders.')
 }
 function loadNotified(){try{return JSON.parse(localStorage.getItem('notifiedDues')||'{}')}catch(e){return{}}}
 function saveNotified(n){
@@ -1088,19 +1090,19 @@ function getPin(){try{return JSON.parse(localStorage.getItem('dtPin')||'null')}c
 async function verifyPin(p){let s=getPin();if(!s)return true;return await sha256(s.salt+p)===s.hash}
 function refreshPinUI(){let on=!!getPin();$('pinStatus').textContent='PIN: '+(on?'On':'Off');$('pinSetBtn').textContent=on?'Change PIN':'Set PIN';$('pinRemoveBtn').classList.toggle('hidden',!on)}
 async function setPin(){
-  if(!(window.crypto&&crypto.subtle))return alert('App lock needs the app to be opened over https.');
+  if(!(window.crypto&&crypto.subtle))return warn('App lock needs the app to be opened over https.');
   let fields=[{name:'p1',label:'New PIN (4–8 digits)',type:'password',inputmode:'numeric'},{name:'p2',label:'Confirm new PIN',type:'password',inputmode:'numeric'}];
   if(getPin())fields.unshift({name:'old',label:'Current PIN',type:'password',inputmode:'numeric'});
   let r=await modal({title:getPin()?'Change PIN':'Set app PIN',fields,okText:'Save PIN'});if(!r)return;
-  if(getPin()&&!await verifyPin(r.old))return alert('Current PIN is wrong.');
-  if(!/^\d{4,8}$/.test(r.p1))return alert('PIN must be 4 to 8 digits.');
-  if(r.p1!==r.p2)return alert('The two PINs don\'t match.');
+  if(getPin()&&!await verifyPin(r.old))return warn('Current PIN is wrong.');
+  if(!/^\d{4,8}$/.test(r.p1))return warn('PIN must be 4 to 8 digits.');
+  if(r.p1!==r.p2)return warn('The two PINs don\'t match.');
   let salt=uid();localStorage.setItem('dtPin',JSON.stringify({salt,hash:await sha256(salt+r.p1)}));
   refreshPinUI();toast('PIN saved — the app will ask for it on open')
 }
 async function removePin(){
   let r=await modal({title:'Remove PIN',fields:[{name:'old',label:'Current PIN',type:'password',inputmode:'numeric'}],okText:'Remove',danger:true});if(!r)return;
-  if(!await verifyPin(r.old))return alert('Wrong PIN.');
+  if(!await verifyPin(r.old))return warn('Wrong PIN.');
   localStorage.removeItem('dtPin');refreshPinUI();toast('PIN removed')
 }
 let lockFails=0,hiddenAt=0;
@@ -1131,8 +1133,8 @@ async function exportData(){
 async function importData(e){
   let input=e.target,f=input.files[0];input.value=''; // allow picking the same file again later
   if(!f)return;
-  let data;try{data=JSON.parse(await f.text())}catch(err){return alert('That file isn\'t a valid backup (could not read JSON).')}
-  if(!data||!Array.isArray(data.income)||!Array.isArray(data.expense)||!Array.isArray(data.dues))return alert('Invalid backup');
+  let data;try{data=JSON.parse(await f.text())}catch(err){return warn('That file isn\'t a valid backup (could not read JSON).')}
+  if(!data||!Array.isArray(data.income)||!Array.isArray(data.expense)||!Array.isArray(data.dues))return warn('Invalid backup');
   if(!await confirmModal('Replace ALL data on this device with this backup?','Restore',true))return;
   // prepare documents first so a bad file can't leave you half-restored
   let docs=[];for(let x of (data.documents||[])){let y={...x};try{if(y.blob)y.blob=await base64ToBlob(y.blob)}catch(err){y.blob=null}docs.push(y)}
@@ -1141,11 +1143,15 @@ async function importData(e){
     for(let x of (k==='documents'?docs:(data[k]||[]))){
       // keep original ids so links (due→expense, expense→card) stay intact
       let y={...x};if(y.id==null||typeof y.id!=='number')delete y.id;
+      // restored records count as "just edited", so older deletions (tombstones) and
+      // older copies in Google Sheets can't remove or overwrite them on the next sync
+      if(SYNCED_STORES.has(k))y.updatedAt=Date.now();
       await putExact(k,y)
     }
   }
-  if(data.meta){meta=mergeMeta(data.meta);saveMeta(false)}
-  await refresh();toast('Backup restored')
+  await new Promise(r=>{let q=db.transaction('tombstones','readwrite').objectStore('tombstones').clear();q.onsuccess=()=>r();q.onerror=()=>r()});
+  if(data.meta){meta=mergeMeta(data.meta);saveMeta()}
+  await refreshAndSync();toast('Backup restored')
 }
 function clearStores(){return Promise.all(Object.keys(state).map(k=>new Promise(r=>{let q=db.transaction(k,'readwrite').objectStore(k).clear();q.onsuccess=()=>r();q.onerror=()=>r()})))}
 async function clearAll(){
@@ -1156,7 +1162,7 @@ async function clearAll(){
 }
 
 let installEvent;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});
-async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else alert(/iphone|ipad/i.test(navigator.userAgent)?'In Safari, tap Share → Add to Home Screen.':'Use your browser menu → Install app / Add to Home screen.')}
+async function installApp(){if(installEvent){installEvent.prompt();installEvent=null}else warn(/iphone|ipad/i.test(navigator.userAgent)?'In Safari, tap Share → Add to Home Screen.':'Use your browser menu → Install app / Add to Home screen.')}
 
 // ---------- App updates ----------
 let updatingApp=false,swReg=null;
@@ -1184,8 +1190,8 @@ function setSyncToken(v){localStorage.setItem('gsSyncToken',v)}
 function updateSyncStatus(msg){$('syncStatus').textContent=msg}
 function saveScriptConfig(){
   let url=val('gsScriptUrlInput').trim(),token=val('gsSyncTokenInput').trim();
-  if(!url)return alert('Paste your Apps Script Web App URL first.');
-  if(!token)return alert('Set a secret token (any word/phrase — must match what you put in the script).');
+  if(!url)return warn('Paste your Apps Script Web App URL first.');
+  if(!token)return warn('Set a secret token (any word/phrase — must match what you put in the script).');
   setScriptUrl(url);setSyncToken(token);updateSyncStatus('Saved. Tap "Sync Now" whenever you want to sync.')
 }
 // Column layout per Sheet tab. New columns are only ever appended at the end,
@@ -1405,11 +1411,11 @@ function loanPreview(){
 function resetLoanForm(){['loanName','loanLender','loanPrincipal','loanRate','loanTenure','loanEmi','loanPaidBefore'].forEach(k=>$(k).value='');$('loanTenureUnit').value='months';$('loanStart').value=today();editingLoanId=null;$('loanSaveBtn').textContent='Save Loan';$('loanCancelEdit').classList.add('hidden');$('loanPreview').textContent='';closeBox('loanAddBox')}
 async function addLoan(){
   let f=loanFromForm();
-  if(!f.name)return alert('Enter a loan name');
-  if(!f.principal)return alert('Enter the loan amount');
-  if(isNaN(f.rate)||f.rate<0||f.rate>60)return alert('Enter the yearly interest rate (e.g. 9.5)');
-  if(!(f.tenureMonths>0&&f.tenureMonths<=600))return alert('Enter the tenure (up to 50 years)');
-  if(loanCalc({...f,paidBefore:0,payments:[]}).tooSmall)return alert('That EMI doesn\'t cover the monthly interest — please check the EMI amount.');
+  if(!f.name)return warn('Enter a loan name');
+  if(!f.principal)return warn('Enter the loan amount');
+  if(isNaN(f.rate)||f.rate<0||f.rate>60)return warn('Enter the yearly interest rate (e.g. 9.5)');
+  if(!(f.tenureMonths>0&&f.tenureMonths<=600))return warn('Enter the tenure (up to 50 years)');
+  if(loanCalc({...f,paidBefore:0,payments:[]}).tooSmall)return warn('That EMI doesn\'t cover the monthly interest — please check the EMI amount.');
   let existing=editingLoanId?state.loans.find(l=>l.id===editingLoanId):null;
   let pbStr=val('loanPaidBefore');
   let paidBefore=pbStr!==''?Math.max(0,parseInt(pbStr,10)||0):existing?(existing.paidBefore||0):autoPaidBefore(f);
@@ -1435,7 +1441,7 @@ async function payEmi(id){
   let fields=[{name:'amount',label:`EMI #${c.next.no} — due ${formatDueDate(c.next.date)} ${c.next.date.slice(0,4)}`,type:'number',step:'0.01',inputmode:'decimal',value:round2(c.next.emi)},{name:'date',label:'Paid on',type:'date',value:today()},{name:'log',label:'Also add it to Expenses?',type:'select',options:[{value:'yes',label:'Yes — category "EMI"'},{value:'no',label:'No'}],value:'yes'}];
   if(meta.accounts.length)fields.push({name:'account',label:'Paid from account',type:'select',options:accountOptions(),value:''});
   let r=await modal({title:'Pay EMI — '+L.name,fields,okText:'Mark EMI paid'});if(!r)return;
-  let amt=parseAmount(r.amount);if(!amt)return alert('Enter the EMI amount paid');
+  let amt=parseAmount(r.amount);if(!amt)return warn('Enter the EMI amount paid');
   let pay={id:uid(),type:'emi',no:c.next.no,date:r.date||today(),amount:amt};
   if(r.log==='yes'){ensureExpenseCat('EMI');pay.expenseId=await save('expense',{date:pay.date,amount:amt,cat:'EMI',method:r.account?'Bank':'',account:r.account||'',note:`${L.name} EMI #${c.next.no}`})}
   L.payments=[...(L.payments||[]),pay];
@@ -1451,7 +1457,7 @@ async function prepayLoan(id,preset){
     {name:'mode',label:'What did the bank do?',type:'select',options:[{value:'tenure',label:'Kept EMI, loan ends sooner'},{value:'emi',label:'Kept tenure, EMI reduced'}],value:'tenure'},
     {name:'log',label:'Also add it to Expenses?',type:'select',options:[{value:'no',label:'No'},{value:'yes',label:'Yes — category "EMI"'}],value:'no'}],okText:'Record prepayment'});
   if(!r)return;
-  let amt=parseAmount(r.amount);if(!amt)return alert('Enter the amount');
+  let amt=parseAmount(r.amount);if(!amt)return warn('Enter the amount');
   if(amt>c.outstanding+0.01&&!await confirmModal(`That's more than the outstanding ${money(round2(c.outstanding))}. Record it anyway?`,'Record'))return;
   let pay={id:uid(),type:'prepay',date:r.date||today(),amount:amt,mode:r.mode==='emi'?'emi':'tenure'};
   if(r.log==='yes'){ensureExpenseCat('EMI');pay.expenseId=await save('expense',{date:pay.date,amount:amt,cat:'EMI',method:'Bank',note:`${L.name} prepayment`})}
@@ -1580,7 +1586,7 @@ function clearGlobalSearch(){$('globalSearch').value='';runGlobalSearch()}
 function searchGo(i){
   let o=searchResults[i];if(!o)return;
   clearGlobalSearch();$('searchBar').classList.add('hidden');
-  if(o.tab==='income')clearFilters('i');if(o.tab==='expense')clearFilters('e');
+  if(o.tab==='income'){listLimit.i=1e9;clearFilters('i')}if(o.tab==='expense'){listLimit.e=1e9;clearFilters('e')}
   show(o.tab);setTimeout(()=>focusRow(o.row),80)
 }
 function focusRow(id){let el=$(id);if(!el)return;el.scrollIntoView({behavior:'smooth',block:'center'});el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),2600)}
@@ -1631,7 +1637,7 @@ async function saveQuickAdd(){
   let type=qa.type,date=val('qaDate')||today(),note=val('qaNote').trim(),account=val('qaAccount'),obj;
   if(type==='expense'){
     let method=qa.method,cardId=method==='Card'?(+val('qaCard')||null):null;
-    if(method==='Card'&&state.creditcards.length&&!cardId){$('qaCard').focus();return alert('Pick which card you paid with.')}
+    if(method==='Card'&&state.creditcards.length&&!cardId){$('qaCard').focus();return warn('Pick which card you paid with.')}
     obj={date,amount,cat:qa.cat,method,note,account:method==='Card'?'':(meta.accounts.length?account:''),cardId};
     localStorage.setItem('qaMethod',method);if(cardId)localStorage.setItem('qaCard',String(cardId))
   }else obj={date,amount,cat:qa.cat,note,account:meta.accounts.length?account:''};
@@ -1897,6 +1903,14 @@ function renderIncomeFastForm(){
 function pickICat(i){setSelectValue($('iCat'),iCatList[i]);renderIncomeFastForm()}
 function setIDate(w){$('iDate').value=w==='yesterday'?ymd(new Date(Date.now()-86400000)):today();renderIncomeFastForm()}
 
+// ---------- Double-tap protection ----------
+// A fast double tap on Save must not create two entries.
+const busyActions=new Set();
+function guard(name,fn){return async function(...a){if(busyActions.has(name))return;busyActions.add(name);try{return await fn.apply(this,a)}finally{setTimeout(()=>busyActions.delete(name),600)}}}
+addExpense=guard('addExpense',addExpense);addIncome=guard('addIncome',addIncome);saveQuickAdd=guard('saveQuickAdd',saveQuickAdd);
+repeatExpense=guard('repeatExpense',repeatExpense);addDue=guard('addDue',addDue);addCard=guard('addCard',addCard);addLoan=guard('addLoan',addLoan);
+addAdvance=guard('addAdvance',addAdvance);addNote=guard('addNote',addNote);addDocument=guard('addDocument',addDocument);
+toggleDue=guard('toggleDue',toggleDue);toggleAdvanceStatus=guard('toggleAdvanceStatus',toggleAdvanceStatus);
 // ---------- Start-up ----------
 (async()=>{
   await openDB();

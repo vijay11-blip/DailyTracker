@@ -213,7 +213,10 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.5)}
 @media(display-mode:standalone){.install-sec{display:none}}
 canvas{max-width:100%}
 @media(prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){--bg:#0b1220;--surface:#131b2c;--surface-2:#182236;--border:#25304a;--text:#eef2ff;--muted:#94a3b8;--muted-2:#64748b;--brand-soft:#1b2547;--income-soft:#0f2a1c;--expense-soft:#33161a;--warn-soft:#3a2a0d}
+  :root:not([data-theme="light"]){--bg:#0b1220;--surface:#131b2c;--surface-2:#182236;--border:#25304a;--text:#eef2ff;--muted:#94a3b8;--muted-2:#64748b;--brand-soft:#1b2547;--income-soft:#0f2a1c;--expense-soft:#33161a;--warn-soft:#3a2a0d;--brand-dark:#aab9ff}
+  :root:not([data-theme="light"]) .danger{color:#ff8a8f}
+  :root:not([data-theme="light"]) .toast{border:1px solid rgba(255,255,255,.14)}
+  :root:not([data-theme="light"]) details.hist summary,:root:not([data-theme="light"]) .balance{color:#8ea2ff}
 }
 @media(max-width:700px){
   .cards{grid-template-columns:1fr}
