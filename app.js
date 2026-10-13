@@ -322,7 +322,7 @@ let eCatList=[],eRepeatList=[];
 function frequentExpenses(n=6){
   let cutoff=ymd(new Date(Date.now()-60*86400000)),map=new Map();
   for(let x of state.expense){
-    if(x.date<cutoff||x.recurKey||/\((auto|recurring)\)$/.test(x.note||'')||x.cat==='EMI')continue;
+    if(x.date<cutoff||(x.recurKey&&!String(x.recurKey).startsWith('tg:'))||/\((auto|recurring)\)$/.test(x.note||'')||x.cat==='EMI')continue;
     let k=[x.cat,x.amount,x.method||'',(x.note||'').trim().toLowerCase(),x.cardId||'',x.account||''].join('|');
     let e=map.get(k)||{x,count:0,last:''};e.count++;if(x.date>=e.last){e.last=x.date;e.x=x}map.set(k,e)
   }
@@ -1872,7 +1872,7 @@ function txRowsHtml(rows,type,withDays=true){
   for(let x of rows){
     if(withDays&&x.date!==last){out+=`<div class="day-head"><span>${dayLabel(x.date)}</span><span>${money(totals[x.date])}</span></div>`;last=x.date}
     let title=x.note||x.cat||x.source||(type==='income'?'Income':'Expense');
-    out+=`<div class="tx" id="row-${type}-${x.id}" onclick="txMenu('${type}',${x.id})"><span class="tx-ico">${catIcon(x.cat||x.source)}</span><span class="tx-main"><b>${esc(title)}</b><small>${esc(txSub(x))}${withDays?'':(txSub(x)?' · ':'')+(withDays?'':dayLabel(x.date))}${x.recurKey?' · 🔁':''}</small></span><b class="tx-amt ${type==='income'?'income':'expense'}">${type==='income'?'+':'−'}${money(x.amount)}</b></div>`
+    out+=`<div class="tx" id="row-${type}-${x.id}" onclick="txMenu('${type}',${x.id})"><span class="tx-ico">${catIcon(x.cat||x.source)}</span><span class="tx-main"><b>${esc(title)}</b><small>${esc(txSub(x))}${withDays?'':(txSub(x)?' · ':'')+(withDays?'':dayLabel(x.date))}${x.recurKey?(String(x.recurKey).startsWith('tg:')?' · ✈️ Telegram':' · 🔁'):''}</small></span><b class="tx-amt ${type==='income'?'income':'expense'}">${type==='income'?'+':'−'}${money(x.amount)}</b></div>`
   }
   return out
 }
